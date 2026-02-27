@@ -1,0 +1,182 @@
+{
+  "name": "DevLLMOps 01 - GitHub Helper",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "devllmops-github-helper",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "id": "wf01h-01",
+      "name": "GitHub Helper Webhook",
+      "webhookId": "devllmops-github-helper",
+      "notes": "Receives JSON body with 'operation' field: 'read' or 'commit'. Read: {operation, path, repo, branch}. Commit: {operation, path, content_text, message, sha, repo, branch}."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-read",
+              "leftValue": "={{ $json.body.operation }}",
+              "rightValue": "read",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 300],
+      "id": "wf01h-02",
+      "name": "Is Read?",
+      "notes": "Routes to Read path (true) or Commit path (false)."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('GitHub Helper Webhook').item.json.body.repo }}/contents/{{ $('GitHub Helper Webhook').item.json.body.path }}?ref={{ encodeURIComponent($('GitHub Helper Webhook').item.json.body.branch) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "id": "wf01h-03",
+      "name": "Read from GitHub",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "GET /repos/{repo}/contents/{path}?ref={branch} — returns JSON with content (base64), sha, path, size.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $('GitHub Helper Webhook').first().json.body || {};\nconst contentText = body.content_text || '';\nconst contentBase64 = Buffer.from(String(contentText)).toString('base64');\nconst result = {\n  message: body.message || '',\n  content: contentBase64,\n  branch: body.branch || ''\n};\nconst sha = body.sha || '';\nif (sha && sha.trim() !== '') {\n  result.sha = sha;\n}\nconst repo = body.repo || '';\nconst path = body.path || '';\nreturn [{ json: { ...result, path, repo } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 400],
+      "id": "wf01h-04",
+      "name": "Base64 Encode + Build Body",
+      "notes": "Base64-encodes content_text for GitHub Contents API. Builds PUT body."
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/contents/{{ $json.path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({ message: $json.message, content: $json.content, branch: $json.branch }, $json.sha ? { sha: $json.sha } : {})) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 400],
+      "id": "wf01h-05",
+      "name": "Commit to GitHub",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "PUT /repos/{repo}/contents/{path} to create or update a file on the branch via GitHub Contents API.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "GitHub Helper Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Read?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Read?": {
+      "main": [
+        [
+          {
+            "node": "Read from GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Base64 Encode + Build Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 Encode + Build Body": {
+      "main": [
+        [
+          {
+            "node": "Commit to GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}

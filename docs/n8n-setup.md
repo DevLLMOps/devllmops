@@ -24,6 +24,7 @@ In n8n **Settings > Credentials**, create:
 | --- | --- | --- |
 | **GitHub API** | GitHub OAuth App or PAT | GitHub > Settings > Developer Settings > PATs. Scopes: `repo`, `project`, `workflow`, `actions:read` |
 | **Anthropic API** | Header Auth (name: `x-api-key`) | [console.anthropic.com](https://console.anthropic.com/) > API Keys |
+| **Anthropic API (native)** | Anthropic API (`anthropicApi`) | Same API key as above. Required by WF01's AI Agent node (n8n-langchain nodes use the native credential type) |
 | **n8n Internal API** | Header Auth (name: `X-N8N-API-KEY`) | n8n > Settings > API > Create API Key. Used by workflow 05 to self-track execution costs |
 | **Slack** *(optional)* | Slack OAuth | Slack app with `chat:write` scope for notifications |
 
@@ -95,7 +96,11 @@ All AI-generated comments follow a consistent format: a robot header (`> 🤖 Th
 
 ### Workflow 1: Board-Driven Intent Analysis + Auto-Develop
 
-When an issue is moved to **AI Ready** on the GitHub Projects board, the workflow creates a typed feature branch, posts a "starting" comment, moves the item to **In Progress**, then asks Claude for an implementation plan. If the issue has the **auto-develop** checkbox checked, the workflow also generates code using Claude Sonnet 4.6, commits the implementation files to the branch, and posts a summary comment. CI then runs automatically, and on success WF03 creates a PR.
+When an issue is moved to **AI Ready** on the GitHub Projects board, the workflow creates a typed feature branch, posts a "starting" comment, moves the item to **In Progress**, then asks Claude for an implementation plan. If the issue has the **auto-develop** checkbox checked, a **single-shot pipeline** fetches source files from the branch, sends them all to Claude in one prompt, parses `FILE` blocks from the response, and commits each changed file. CI then runs automatically, and on success WF03 creates a PR.
+
+The pipeline uses two sub-workflows:
+- **Helper sub-workflow** (`01-commit-helper.json`) — handles read/commit operations via the GitHub Contents API (base64 encoding, SHA tracking)
+- **Anthropic Proxy** (`01-anthropic-proxy.json`) — optional proxy for routing Anthropic API calls (used to work around n8n LangChain `$schema` bug; see `FUTURE_IMPROVEMENTS.md`)
 
 The trigger is an org-level `projects_v2_item` webhook (not a repo-level `issues` webhook). The workflow validates that the status field was changed to "AI Ready" before proceeding -- all other column transitions are silently ignored.
 
@@ -155,23 +160,31 @@ flowchart TD
     O --> P["`**HTTP Request**
     GET file tree`"]
     P --> Q["`**Code**
-    Select source files`"]
-    Q --> R["`**HTTP Request**
-    GET file contents ×N`"]
-    R --> S["`**Code**
-    Build implementation prompt`"]
+    Select Files
+    (from analysis + tree)`"]
+    Q --> R["`**SplitInBatches**
+    Fetch Loop`"]
+    R -->|loop| R1["`**HTTP Request**
+    Fetch File
+    (GitHub Contents API)`"]
+    R1 --> R
+    R -->|done| S["`**Code**
+    Build Full Prompt
+    (files + SHA map)`"]
     S --> T["`**HTTP Request**
-    POST Claude Sonnet 4.6
-    (code generation, 5min)`"]
+    Claude Implementation
+    (Sonnet, extended thinking)`"]
     T --> U["`**Code**
-    Parse FILE blocks`"]
-    U --> V["`**HTTP Request**
-    GET current SHAs ×M`"]
-    V --> W["`**Code**
-    Build commit payloads`"]
-    W --> X["`**HTTP Request**
-    PUT commit files ×M`"]
-    X --> Y["`**Code**
+    Parse & Prepare Commits
+    (FILE blocks + diff filter)`"]
+    U --> V["`**SplitInBatches**
+    Commit Loop`"]
+    V -->|loop| V1["`**HTTP Request**
+    Commit via Helper`"]
+    V1 --> V
+    V -->|done| W["`**Code**
+    Format Output`"]
+    W --> Y["`**Code**
     Build summary comment`"]
     Y --> ZZ["`**HTTP Request**
     POST implementation comment`"]
@@ -191,11 +204,16 @@ flowchart TD
 | **Post analysis** | Code + HTTP | Parses `SUMMARY:` line from Claude response, posts with AI header + collapsed details |
 | **Check auto-develop** | IF | Checks if issue body contains `[x] Yes, auto-develop` checkbox |
 | **Fetch context** | HTTP Request x2 | Fetches CLAUDE.md (neverError) and recursive file tree from branch |
-| **Select files** | Code | Filters tree to `app/src/**` + root config files, text extensions, capped at 25 files |
-| **Fetch sources** | HTTP Request | Fetches each selected file's base64 content from branch (per item) |
-| **Code generation** | Code + HTTP | Builds prompt with CLAUDE.md + issue + analysis + all source files (80K cap), calls `claude-sonnet-4-6` with 16K max tokens and 5-minute timeout |
-| **Parse + commit** | Code + HTTP | Regex-parses `FILE/ACTION/CONTENT/FILE_END` blocks, fetches current SHAs, commits each file with `[auto-develop]` prefix |
-| **Summary comment** | Code + HTTP | Aggregates committed files into a summary comment on the issue |
+| **Select Files** | Code | Extracts backtick-quoted paths from the analysis text, cross-references with the file tree. Falls back to selecting all source files by extension if no exact matches. Always includes CLAUDE.md. Capped at 15 files |
+| **Fetch Loop** | SplitInBatches v3 | Iterates over selected files (batch=1). Output [0]=done, [1]=loop |
+| **Fetch File** | HTTP Request | `GET /repos/{repo}/contents/{path}?ref={branch}` with `neverError: true` |
+| **Build Full Prompt** | Code | Decodes fetched files from base64, builds system + user prompt with FILE block output format. Stores `_shaMap` (path→SHA) and `_contentMap` (path→original content) for downstream use. Warns Claude that analysis paths may not exist. Uses `claude-sonnet-4-20250514` with extended thinking (10K budget tokens) |
+| **Claude Implementation** | HTTP Request | POST to Anthropic Messages API. Sonnet, 16K output tokens, 5-minute timeout, extended thinking enabled. Returns FILE blocks with complete file contents |
+| **Parse & Prepare Commits** | Code | Extracts `FILE:` blocks and `SUMMARY:` from Claude response. Compares each file against `_contentMap` to **filter out unchanged files** (prevents empty commits). Looks up SHAs from `_shaMap` for existing file updates |
+| **Commit Loop** | SplitInBatches v3 | Iterates over parsed files (batch=1). Output [0]=done, [1]=loop |
+| **Commit via Helper** | HTTP Request | POST to helper sub-workflow webhook with path, content, SHA, branch, commit message (`[auto-develop] Update {path}`) |
+| **Format Output** | Code | Reads `_meta` from Parse & Prepare Commits, builds `{output, intermediateSteps}` for the summary |
+| **Summary comment** | Code + HTTP | Posts summary comment listing committed files on the issue |
 
 ### Workflow 2: PR Opened > AI Review + Routing
 
@@ -438,6 +456,8 @@ Ready-to-import n8n workflow JSON files are available in the [`n8n/`](../n8n/) d
 | File | Workflow |
 | --- | --- |
 | [`01-intent-analysis.json`](../n8n/01-intent-analysis.json) | Board-Driven Intent Analysis + Auto-Develop |
+| [`01-commit-helper.json`](../n8n/01-commit-helper.json) | Commit Helper (sub-workflow for WF01 auto-develop) |
+| [`01-anthropic-proxy.json`](../n8n/01-anthropic-proxy.json) | Anthropic Proxy (sub-workflow, strips `$schema` from tool schemas) |
 | [`02-pr-ai-review.json`](../n8n/02-pr-ai-review.json) | PR Opened > AI Review + Routing |
 | [`03-ci-failure-autofix.json`](../n8n/03-ci-failure-autofix.json) | CI Failure > Agent Auto-Fix |
 | [`04-production-alert.json`](../n8n/04-production-alert.json) | Production Alert > Agent Investigation |
@@ -453,6 +473,7 @@ Ready-to-import n8n workflow JSON files are available in the [`n8n/`](../n8n/) d
 | Placeholder | Replace with |
 | --- | --- |
 | `REPLACE_ME` (credential IDs) | Select your own credentials in each node |
+| `REPLACE_ME_HELPER_WF_ID` | The n8n workflow ID of the deployed `01-commit-helper.json` (used by WF01's Commit File tool) |
 | `OWNER/REPO` | Your GitHub `org/repo` (e.g., `MyOrg/my-app`) |
 | `N8N_HOST` | Your n8n hostname (e.g., `n8n.yourdomain.com`) -- used by workflow 05 |
 | `REPLACE_WITH_QUALITY_SENTINEL_HANDLE` | Your Quality Sentinel's GitHub username (workflow 02) |
