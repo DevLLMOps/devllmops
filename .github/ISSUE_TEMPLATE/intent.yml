@@ -1,0 +1,49 @@
+name: Intent
+description: Define an intent for AI agent-driven development
+title: "[INTENT]: "
+labels: ["intent"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a context document for AI agent development.
+        Provide clear intent and constraints so the agent can generate a correct first version.
+
+  - type: textarea
+    id: intent
+    attributes:
+      label: Intent
+      description: What should be built or changed?
+      placeholder: "Describe the desired outcome in concrete terms..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Business reason, related files, APIs, prior decisions
+      placeholder: "Why this matters, what existing code is involved, links to relevant docs..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: How do we verify this works? List testable conditions.
+      placeholder: |
+        - [ ] Endpoint returns 200 with valid JWT
+        - [ ] Invalid credentials return 401
+        - [ ] Tests cover happy path and error cases
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Architecture Constraints
+      description: Performance, security, compatibility, or design requirements the agent must respect
+      placeholder: "e.g., Must use existing auth middleware, response time < 200ms, no new dependencies..."
+    validations:
+      required: false

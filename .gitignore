@@ -1,0 +1,6 @@
+PROMPT.md
+.env
+.env.*
+!.env.example
+node_modules/
+.claude/
