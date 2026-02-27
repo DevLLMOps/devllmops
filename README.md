@@ -10,28 +10,22 @@ Based on [OCPA specs](https://github.com/flavienbwk/ocpa-specs) for project stru
 
 ## The Workflow
 
-```text
-               DEVLLMOPS LOOP
-
- Human Intent ───> AI Agent ───> Code + Tests
-      ^                ^              |
-      |                |              v
-      |          Context &      Automated CI
-      |          Feedback    (lint, test, security)
-      |                |              |
-      |                |              v
- Next Intent     Agent fixes    AI Agent Review
-      ^          on failure     (adversarial)
-      |                ^              |
-      |                |              v
-      |                +------- Pass? --> Deploy
-      |                    |                 |
-      |                Fail/Novel            v
-      |                    |             Observe
-      |                    v                 |
-      |              Human Review            |
-      |                                      |
-      +--------------------------------------+
+```mermaid
+flowchart TD
+    A["`**Human Intent**`"] --> B["`**AI Agent**`"]
+    B --> C["`**Code + Tests**`"]
+    C --> D["`**Automated CI**
+    lint, test, security`"]
+    D --> E["`**AI Agent Review**
+    adversarial`"]
+    E --> F{Pass?}
+    F -- Yes --> G["`**Deploy**`"]
+    G --> H["`**Observe**`"]
+    H --> A
+    F -- "Fail (routine)" --> I["`**Agent fixes**`"]
+    I --> D
+    F -- "Fail (novel)" --> J["`**Human Review**`"]
+    J --> B
 ```
 
 Stages don't get faster. They merge. The agent doesn't know what "phase" it's in. There's just intent, context, and iteration.
