@@ -101,6 +101,10 @@ Constraints: Tokens expire after 1h. Use bcrypt for password hashing.
 
 Then let the agent work. Steer, iterate, ship.
 
+## Demo Project
+
+See [devllmops-demo-quizapp](https://github.com/DevLLMOps/devllmops-demo-quizapp) for a reference implementation: a quiz app built end-to-end with DevLLMOps + OCPA specs, including CI workflows, AI review, intent-driven issues, and `CLAUDE.md`/`TEAM.md` configuration.
+
 ## Cost Warning
 
 AI agents consume tokens at scale. A single Context Engineer running Claude can use **$30-150+/day** in API costs. Multiply by team size.
