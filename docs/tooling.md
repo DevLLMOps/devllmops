@@ -77,6 +77,8 @@ docker run -d --name n8n -p 5678:5678 -v n8n_data:/home/node/.n8n n8nio/n8n
 
 n8n connects to GitHub, Slack, Anthropic API, and monitoring tools via built-in integrations.
 
+See [n8n Setup](n8n-setup.md) for deployment, credentials, and the 5 core DevLLMOps workflows.
+
 ## CI/CD: GitHub Actions
 
 Primary CI/CD platform. See [GitHub Setup](github-setup.md) for workflow configuration.

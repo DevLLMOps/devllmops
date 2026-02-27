@@ -37,12 +37,12 @@ EOF
 
 Add in Settings > Secrets and variables > Actions:
 
-| Secret | Purpose | Required |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Claude API for AI review workflow | Yes |
-| `KUBE_CONFIG` | Base64-encoded kubeconfig for K8s deployments | If using K8s |
-| `SCW_ACCESS_KEY` | Scaleway access key for ephemeral VMs | If using Scaleway |
-| `SCW_SECRET_KEY` | Scaleway secret key | If using Scaleway |
+| Secret              | Purpose                                       | Required          |
+| ------------------- | --------------------------------------------- | ----------------- |
+| `ANTHROPIC_API_KEY` | Claude API for AI review workflow             | Yes               |
+| `KUBE_CONFIG`       | Base64-encoded kubeconfig for K8s deployments | If using K8s      |
+| `SCW_ACCESS_KEY`    | Scaleway access key for ephemeral VMs         | If using Scaleway |
+| `SCW_SECRET_KEY`    | Scaleway secret key                           | If using Scaleway |
 
 ## GitHub Actions Workflows
 
@@ -222,13 +222,13 @@ body:
 
 Create a project board with these columns and automations:
 
-| Column | Auto-Trigger |
-|---|---|
-| **Intent** | Issue created with `intent` label |
-| **In Progress** | PR opened referencing issue |
-| **Verification** | CI workflow starts |
-| **Human Review** | Review requested on PR |
-| **Shipped** | PR merged to `main` |
-| **Released** | PR merged to `release` |
+| Column           | Auto-Trigger                      |
+| ---------------- | --------------------------------- |
+| **Intent**       | Issue created with `intent` label |
+| **In Progress**  | PR opened referencing issue       |
+| **Verification** | CI workflow starts                |
+| **Human Review** | Review requested on PR            |
+| **Shipped**      | PR merged to `main`               |
+| **Released**     | PR merged to `release`            |
 
 Configure via GitHub Projects > Settings > Workflows. Use built-in automations for "Item added" and "Pull request merged" triggers.

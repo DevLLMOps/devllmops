@@ -139,6 +139,7 @@ Any model accessible via an OpenAI-compatible API (GPT-4, Llama, Mistral, DeepSe
 | [Methodology](docs/methodology.md)              | The DevLLMOps workflow in detail              |
 | [Team Roles & Organization](docs/team-roles.md) | Roles, team structures, transition from Agile |
 | [Tooling Setup](docs/tooling.md)                | Installation and configuration for all tools  |
+| [n8n Setup](docs/n8n-setup.md)                  | n8n deployment and automation workflows       |
 | [GitHub Setup](docs/github-setup.md)            | Repository, Actions, Projects configuration   |
 | [Security](docs/security.md)                    | Securing AI-generated code                    |
 | [Cost Management](docs/cost-management.md)      | Token cost control strategies                 |
