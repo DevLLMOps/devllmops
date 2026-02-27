@@ -43,204 +43,157 @@ In every n8n GitHub webhook trigger node, set the same secret for signature veri
 
 When a GitHub issue is created with the `intent` label, Claude analyzes it and posts an implementation plan as a comment.
 
-```text
-Trigger: Webhook (GitHub issue opened, label = "intent")
-  |
-  v
-IF node: check event.action == "opened" AND "intent" in labels
-  |
-  v
-HTTP Request: GET github.com/repos/{owner}/{repo}/issues/{number}
-  (fetch full issue body using GitHub credential)
-  |
-  v
-HTTP Request: POST api.anthropic.com/v1/messages
-  Headers: x-api-key, anthropic-version: 2023-06-01
-  Body:
-    model: claude-haiku-4-5-20251001
-    max_tokens: 2048
-    messages:
-      - role: user
-        content: |
-          You are a DevLLMOps Context Engineer. Analyze this intent
-          and respond with:
-          1. Implementation approach (2-3 sentences)
-          2. Files likely affected
-          3. Risks or open questions
-
-          Intent: {{ $json.body }}
-  |
-  v
-HTTP Request: POST github.com/repos/{owner}/{repo}/issues/{number}/comments
-  Body: { "body": "## Agent Analysis\n\n{{ response }}" }
+```mermaid
+flowchart TD
+    A["`**Webhook**
+    GitHub issue event`"] --> B{"`**IF**
+    action = opened
+    AND intent label?`"}
+    B -- No --> Z[End]
+    B -- Yes --> C["`**HTTP Request**
+    GET issue body`"]
+    C --> D["`**HTTP Request**
+    POST Anthropic API`"]
+    D --> E["`**HTTP Request**
+    POST issue comment`"]
 ```
 
-**n8n nodes used:** Webhook, IF, HTTP Request (x3)
+| Step | n8n Node | Details |
+| --- | --- | --- |
+| **Trigger** | Webhook | GitHub issue event, filtered to `opened` action |
+| **Filter** | IF | `event.action == "opened"` AND `"intent" in labels` |
+| **Fetch issue** | HTTP Request | `GET /repos/{owner}/{repo}/issues/{number}` with GitHub credential |
+| **AI analysis** | HTTP Request | `POST api.anthropic.com/v1/messages` -- model: `claude-haiku-4-5-20251001`, prompt asks for implementation approach, affected files, risks |
+| **Post comment** | HTTP Request | `POST /repos/{owner}/{repo}/issues/{number}/comments` -- body: `## Agent Analysis\n\n{{ response }}` |
 
 ### Workflow 2: PR Opened > AI Review + Routing
 
 When a PR is opened, Claude reviews the diff and either approves or flags for human review.
 
-```text
-Trigger: Webhook (GitHub PR opened, targeting main)
-  |
-  v
-HTTP Request: GET github.com/repos/{owner}/{repo}/pulls/{number}/files
-  (fetch changed files list)
-  |
-  v
-HTTP Request: GET github.com/repos/{owner}/{repo}/pulls/{number}.diff
-  Accept: application/vnd.github.v3.diff
-  (fetch full diff, truncate to 50K chars)
-  |
-  v
-IF node: diff touches security-critical paths?
-  (check filenames against: auth/, payments/, deploy*, workflows/)
-  |
-  YES --> Set variable: require_human = true
-  NO  --> Set variable: require_human = false
-  |
-  v
-HTTP Request: POST api.anthropic.com/v1/messages
-  Body:
-    model: claude-haiku-4-5-20251001
-    max_tokens: 2048
-    messages:
-      - role: user
-        content: |
-          Review this PR diff for:
-          1. Bugs and logic errors
-          2. Security vulnerabilities (OWASP Top 10)
-          3. Missing error handling
-          Only flag real issues. Be concise.
-
-          {{ diff }}
-  |
-  v
-HTTP Request: POST github.com/repos/{owner}/{repo}/issues/{number}/comments
-  Body: { "body": "## AI Review\n\n{{ response }}" }
-  |
-  v
-IF node: require_human == true OR issues found?
-  YES --> HTTP Request: POST request review from Quality Sentinel
-          (use TEAM.md GitHub handle)
-  NO  --> HTTP Request: POST approve PR
-          POST github.com/repos/{owner}/{repo}/pulls/{number}/reviews
-          Body: { "event": "APPROVE" }
+```mermaid
+flowchart TD
+    A["`**Webhook**
+    GitHub PR opened`"] --> B["`**HTTP Request**
+    GET changed files`"]
+    B --> C["`**HTTP Request**
+    GET full diff`"]
+    C --> D{"`**IF**
+    Touches security
+    critical paths?`"}
+    D -- Yes --> E1["`**Set**
+    require_human = true`"]
+    D -- No --> E2["`**Set**
+    require_human = false`"]
+    E1 --> F["`**HTTP Request**
+    POST Anthropic API
+    (AI review)`"]
+    E2 --> F
+    F --> G["`**HTTP Request**
+    POST review comment`"]
+    G --> H{"`**IF**
+    require_human OR
+    issues found?`"}
+    H -- Yes --> I["`**HTTP Request**
+    Request human review
+    (Quality Sentinel)`"]
+    H -- No --> J["`**HTTP Request**
+    Approve PR`"]
 ```
 
-**n8n nodes used:** Webhook, HTTP Request (x5), IF (x2), Set
+| Step | n8n Node | Details |
+| --- | --- | --- |
+| **Trigger** | Webhook | GitHub PR event, filtered to `opened` targeting `main` |
+| **Get files** | HTTP Request | `GET /repos/{owner}/{repo}/pulls/{number}/files` |
+| **Get diff** | HTTP Request | `GET /repos/{owner}/{repo}/pulls/{number}.diff` (Accept: `application/vnd.github.v3.diff`), truncate to 50K chars |
+| **Security check** | IF | Check filenames against: `auth/`, `payments/`, `deploy*`, `workflows/` |
+| **Set flag** | Set | `require_human = true/false` |
+| **AI review** | HTTP Request | `POST api.anthropic.com/v1/messages` -- model: `claude-haiku-4-5-20251001`, reviews for bugs, OWASP Top 10, missing error handling |
+| **Post comment** | HTTP Request | `POST /repos/{owner}/{repo}/issues/{number}/comments` -- body: `## AI Review\n\n{{ response }}` |
+| **Route** | IF | If `require_human` or issues found: request review from Quality Sentinel (GitHub handle from `TEAM.md`). Otherwise: approve PR via `POST /pulls/{number}/reviews` with `"event": "APPROVE"` |
 
 ### Workflow 3: CI Failure > Agent Auto-Fix
 
 When CI checks fail on a PR, Claude reads the logs and suggests a fix.
 
-```text
-Trigger: Webhook (GitHub check_suite completed, conclusion = "failure")
-  |
-  v
-HTTP Request: GET github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs
-  (get failed job details)
-  |
-  v
-HTTP Request: GET github.com/repos/{owner}/{repo}/actions/jobs/{job_id}/logs
-  (fetch failure logs, truncate to 30K chars)
-  |
-  v
-HTTP Request: POST api.anthropic.com/v1/messages
-  Body:
-    model: claude-sonnet-4-6
-    max_tokens: 2048
-    messages:
-      - role: user
-        content: |
-          CI failed on this PR. Analyze the logs and suggest a concrete fix.
-          Be specific about which file and line to change.
-
-          Failure logs:
-          {{ logs }}
-  |
-  v
-HTTP Request: POST github.com/repos/{owner}/{repo}/issues/{pr_number}/comments
-  Body: { "body": "## CI Failure Analysis\n\n{{ response }}" }
+```mermaid
+flowchart TD
+    A["`**Webhook**
+    check_suite failed`"] --> B["`**HTTP Request**
+    GET failed jobs`"]
+    B --> C["`**HTTP Request**
+    GET failure logs`"]
+    C --> D["`**HTTP Request**
+    POST Anthropic API
+    (diagnose failure)`"]
+    D --> E["`**HTTP Request**
+    POST PR comment`"]
 ```
 
-**n8n nodes used:** Webhook, HTTP Request (x4)
+| Step | n8n Node | Details |
+| --- | --- | --- |
+| **Trigger** | Webhook | GitHub `check_suite` event, `conclusion = "failure"` |
+| **Get jobs** | HTTP Request | `GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs` |
+| **Get logs** | HTTP Request | `GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs`, truncate to 30K chars |
+| **AI diagnosis** | HTTP Request | `POST api.anthropic.com/v1/messages` -- model: `claude-sonnet-4-6`, prompt asks for specific file + line fix |
+| **Post comment** | HTTP Request | `POST /repos/{owner}/{repo}/issues/{pr_number}/comments` -- body: `## CI Failure Analysis\n\n{{ response }}` |
 
 ### Workflow 4: Production Alert > Agent Investigation
 
 When your monitoring fires an alert, Claude investigates and creates an issue.
 
-```text
-Trigger: Webhook (from Prometheus/Grafana/Datadog/UptimeKuma)
-  |
-  v
-HTTP Request: POST api.anthropic.com/v1/messages
-  Body:
-    model: claude-sonnet-4-6
-    max_tokens: 2048
-    messages:
-      - role: user
-        content: |
-          Production alert received. Analyze and suggest investigation steps.
-          Alert: {{ alert_name }}
-          Severity: {{ severity }}
-          Details: {{ description }}
-          Service: {{ service }}
-  |
-  v
-HTTP Request: POST github.com/repos/{owner}/{repo}/issues
-  Body:
-    title: "[ALERT] {{ alert_name }}"
-    labels: ["incident", "intent"]
-    body: |
-      ## Production Alert
-
-      **Severity:** {{ severity }}
-      **Service:** {{ service }}
-
-      ## Agent Analysis
-
-      {{ response }}
-
-      ## Next Steps
-      Quality Sentinel: @{{ sentinel_handle }} please investigate.
-  |
-  v
-Slack node (optional): notify #incidents channel
+```mermaid
+flowchart TD
+    A["`**Webhook**
+    Monitoring alert
+    (Prometheus/Grafana/
+    Datadog/UptimeKuma)`"] --> B["`**HTTP Request**
+    POST Anthropic API
+    (investigate alert)`"]
+    B --> C["`**HTTP Request**
+    POST GitHub issue
+    with analysis`"]
+    C --> D["`**Slack** *(optional)*
+    Notify #incidents`"]
 ```
 
-**n8n nodes used:** Webhook, HTTP Request (x2), Slack (optional)
+| Step | n8n Node | Details |
+| --- | --- | --- |
+| **Trigger** | Webhook | Incoming alert from Prometheus, Grafana, Datadog, or UptimeKuma |
+| **AI investigation** | HTTP Request | `POST api.anthropic.com/v1/messages` -- model: `claude-sonnet-4-6`, prompt includes alert name, severity, details, service |
+| **Create issue** | HTTP Request | `POST /repos/{owner}/{repo}/issues` -- title: `[ALERT] {{ alert_name }}`, labels: `incident`, `intent`, body includes agent analysis and tags Quality Sentinel |
+| **Notify** | Slack *(optional)* | Post to `#incidents` channel |
 
 ### Workflow 5: Daily Cost Report
 
 Scheduled workflow that tracks AI token spend and alerts on overruns.
 
-```text
-Trigger: Cron (daily at 09:00 UTC)
-  |
-  v
-HTTP Request: GET api.anthropic.com/v1/organizations/{org_id}/usage
-  (fetch yesterday's token usage -- check Anthropic docs for exact endpoint)
-  |
-  v
-Function node: calculate daily cost
-  - Input tokens * price per input token
-  - Output tokens * price per output token
-  - Compare to 7-day rolling average
-  |
-  v
-IF node: daily cost > 150% of average?
-  |
-  YES --> Slack node: alert AI Ops Lead / Product Architect
-          "Daily AI spend: $X (150%+ above average). Review usage."
-  |
-  v
-Slack node: post daily summary to #devllmops channel
-  "AI usage yesterday: $X | 7-day avg: $Y | Month-to-date: $Z"
+```mermaid
+flowchart TD
+    A["`**Cron Trigger**
+    Daily 09:00 UTC`"] --> B["`**HTTP Request**
+    GET Anthropic usage`"]
+    B --> C["`**Function**
+    Calculate daily cost
+    vs 7-day average`"]
+    C --> D{"`**IF**
+    Cost > 150%
+    of average?`"}
+    D -- Yes --> E["`**Slack**
+    Alert AI Ops Lead`"]
+    D -- No --> F["`**Slack**
+    Daily summary
+    to #devllmops`"]
+    E --> F
 ```
 
-**n8n nodes used:** Cron Trigger, HTTP Request, Function, IF, Slack (x2)
+| Step | n8n Node | Details |
+| --- | --- | --- |
+| **Trigger** | Cron | Daily at 09:00 UTC |
+| **Fetch usage** | HTTP Request | `GET api.anthropic.com/v1/organizations/{org_id}/usage` (check Anthropic docs for exact endpoint) |
+| **Calculate** | Function | `input_tokens * price + output_tokens * price`, compare to 7-day rolling average |
+| **Threshold check** | IF | `daily_cost > 1.5 * rolling_average` |
+| **Alert** | Slack | If over threshold: alert AI Ops Lead / Product Architect with spend amount |
+| **Summary** | Slack | Post to `#devllmops`: `AI usage yesterday: $X | 7-day avg: $Y | Month-to-date: $Z` |
 
 ## 5. Connecting Workflows to the Projects Board
 

@@ -56,7 +56,7 @@ See [Team Roles & Organization](docs/team-roles.md) for full details, team struc
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | AI agent (default)      | `npm install -g @anthropic-ai/claude-code` |
 | [Docker](https://docs.docker.com/get-docker/)                 | Containerization        | See docs                                   |
 | [Make](https://www.gnu.org/software/make/)                    | Command standardization | `apt install make` / `brew install make`   |
-| [n8n](https://n8n.io/)                                        | Workflow automation     | Self-host with Docker                      |
+| [n8n](https://n8n.io/)                                        | Workflow automation     | Host org-wide or self-host with Docker     |
 | [Gitleaks](https://github.com/gitleaks/gitleaks)              | Secrets scanning        | Runs in CI (GitHub Actions)                |
 
 See [Tooling Setup](docs/tooling.md) for full installation and configuration.
