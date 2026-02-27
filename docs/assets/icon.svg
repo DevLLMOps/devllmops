@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6C5CE7"/>
+      <stop offset="50%" stop-color="#0984E3"/>
+      <stop offset="100%" stop-color="#00B894"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect x="0" y="0" width="256" height="256" rx="48" ry="48" fill="url(#bg)"/>
+
+  <!-- Infinity loop -->
+  <g transform="translate(128, 110)">
+    <path d="M-58,0 C-58,-36 -24,-46 0,-24 C24,-46 58,-36 58,0 C58,36 24,46 0,24 C-24,46 -58,36 -58,0 Z"
+          fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.95"/>
+
+    <!-- Dots on the loop path -->
+    <circle cx="-46" cy="-26" r="7" fill="#FFFFFF"/>
+    <circle cx="0" cy="0" r="8" fill="#FFFFFF"/>
+    <circle cx="46" cy="26" r="7" fill="#FFFFFF"/>
+  </g>
+
+  <!-- "DLO" compact text -->
+  <text x="128" y="200" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF" text-anchor="middle" letter-spacing="8" opacity="0.9">DLO</text>
+</svg>

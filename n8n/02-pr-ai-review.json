@@ -1,0 +1,785 @@
+{
+  "name": "DevLLMOps 02 - PR AI Review + Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "devllmops-github-pr",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "id": "wf02-01",
+      "name": "GitHub Webhook",
+      "webhookId": "devllmops-github-pr",
+      "notes": "Receives pull_request events from GitHub."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-opened",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "opened",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        300
+      ],
+      "id": "wf02-02",
+      "name": "Is PR Opened?",
+      "notes": "Only proceed for newly opened PRs."
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhook = $('GitHub Webhook').first().json.body;\nconst pr = webhook.pull_request;\nreturn [{ json: {\n  pr_number: pr.number,\n  pr_title: pr.title,\n  repo: webhook.repository.full_name,\n  head_branch: pr.head.ref\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ],
+      "id": "wf02-03",
+      "name": "Extract PR Info",
+      "notes": "Extracts PR number, title, repo and branch from webhook payload."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.pr_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Starting AI code review for PR #' + $json.pr_number + '.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **PR:** #' + $json.pr_number + ' \u2014 ' + $json.pr_title + '\\n- **Branch:** `' + $json.head_branch + '`\\n\\nFetching diff and running analysis...\\n\\n</details>' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        300
+      ],
+      "id": "wf02-04",
+      "name": "Post Starting Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts initial comment acknowledging the PR review has started.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract PR Info').first().json.repo }}/pulls/{{ $('Extract PR Info').first().json.pr_number }}/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        300
+      ],
+      "id": "wf02-05",
+      "name": "Get Changed Files",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Retrieves the list of files changed in the PR for security path detection.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract PR Info').first().json.repo }}/pulls/{{ $('Extract PR Info').first().json.pr_number }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3.diff"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        300
+      ],
+      "id": "wf02-06",
+      "name": "Get Full Diff",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches the full PR diff (as unified diff). Timeout 60s for large PRs.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const diff = $('Get Full Diff').first().json.data || '';\nconst truncatedDiff = typeof diff === 'string' ? diff.substring(0, 50000) : JSON.stringify(diff).substring(0, 50000);\nconst ctx = $('Extract PR Info').first().json;\nreturn [{ json: { diff: truncatedDiff, ...ctx } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        300
+      ],
+      "id": "wf02-07",
+      "name": "Check Security Paths",
+      "notes": "Truncates diff to 50K chars and passes through PR context."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract PR Info').first().json.repo }}/contents/CLAUDE.md?ref={{ encodeURIComponent($('Extract PR Info').first().json.head_branch) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        300
+      ],
+      "id": "wf02-ctx1",
+      "name": "Fetch CLAUDE.md",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches CLAUDE.md from the PR branch for project context. Non-fatal if missing."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract PR Info').first().json.repo }}/contents/REVIEW.md?ref={{ encodeURIComponent($('Extract PR Info').first().json.head_branch) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        300
+      ],
+      "id": "wf02-ctx2",
+      "name": "Fetch REVIEW.md",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches REVIEW.md from the PR branch for review guidelines. Non-fatal if missing (falls back to defaults)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Check Security Paths').first().json;\n\n// Decode CLAUDE.md (base64 from GitHub Contents API)\nlet claudeMd = 'Not available.';\ntry {\n  const raw = $('Fetch CLAUDE.md').first().json;\n  if (raw.content) {\n    claudeMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n  }\n} catch (e) {}\n\n// Decode REVIEW.md (base64 from GitHub Contents API)\nlet reviewMd = '';\ntry {\n  const raw = $('Fetch REVIEW.md').first().json;\n  if (raw.content) {\n    reviewMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n  }\n} catch (e) {}\n\n// Decode TEAM.md (base64 from GitHub Contents API)\nlet teamMd = '';\ntry {\n  const raw = $('Fetch TEAM.md').first().json;\n  if (raw.content) {\n    teamMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n  }\n} catch (e) {}\n\n// Fall back to hardcoded defaults if REVIEW.md is absent\nconst guidelines = reviewMd || 'Review for:\\n1. Bugs and logic errors\\n2. OWASP Top 10 security issues\\n3. Missing error handling\\n4. Performance concerns';\n\nconst content = 'You are a senior code reviewer. Review this PR diff.\\n\\n'\n  + 'PROJECT CONTEXT (CLAUDE.md):\\n' + claudeMd + '\\n\\n'\n  + 'REVIEW GUIDELINES (REVIEW.md):\\n' + guidelines + '\\n\\n'\n  + (teamMd ? 'TEAM CONTEXT (TEAM.md):\\n' + teamMd + '\\n\\n' : '')\n  + 'Follow the review guidelines above. Provide your response in EXACTLY this format:\\n'\n  + 'SUMMARY: [one sentence overall assessment]\\n'\n  + '---\\n'\n  + '[detailed review following the guidelines above]\\n\\n'\n  + 'PR title: ' + ctx.pr_title + '\\n\\n'\n  + 'Diff (truncated to 50K chars):\\n' + ctx.diff;\n\nconst requestBody = {\n  model: 'claude-haiku-4-5-20251001',\n  max_tokens: 4096,\n  messages: [{ role: 'user', content }]\n};\nreturn [{ json: requestBody }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        300
+      ],
+      "id": "wf02-08",
+      "name": "Build Claude Body",
+      "notes": "Decodes CLAUDE.md, REVIEW.md, and TEAM.md from base64. Builds Claude prompt with project context, review guidelines, and team context. Falls back to default checklist if REVIEW.md is absent."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2680,
+        300
+      ],
+      "id": "wf02-09",
+      "name": "Claude Review",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
+      },
+      "notes": "Calls Claude Haiku for code review. Timeout 120s, retries 3x with 5s backoff.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const claudeText = $input.first().json.content[0].text;\nconst ctx = $('Check Security Paths').first().json;\n\n// Parse SUMMARY and details\nlet summary = 'AI code review complete for PR #' + ctx.pr_number + '.';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const match = parts[0].trim().match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst body = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full code review</summary>\\n\\n'\n  + details + '\\n\\n'\n  + '</details>';\n\n// === Dynamic security check + reviewer resolution ===\n\nfunction matchGlob(filename, pattern) {\n  if (pattern === '*') return true;\n  if (pattern.endsWith('/')) return filename.startsWith(pattern);\n  if (!pattern.includes('*')) return filename === pattern || filename.startsWith(pattern + '/');\n  const regex = new RegExp('^' + pattern.replace(/\\./g, '\\\\.').replace(/\\*+/g, '.*') + '$');\n  return regex.test(filename);\n}\n\n// 1. Extract security-critical paths from CLAUDE.md\nlet securityPaths = [];\ntry {\n  const raw = $('Fetch CLAUDE.md').first().json;\n  if (raw.content) {\n    const md = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n    const section = md.match(/## Security[- ]Critical Paths[^\\n]*\\n([\\s\\S]*?)(?=\\n## |\\n*$)/i);\n    if (section) {\n      const ticks = section[1].match(/`([^`]+)`/g);\n      if (ticks) securityPaths = ticks.map(t => t.replace(/`/g, ''));\n    }\n  }\n} catch (e) {}\n\n// 2. Extract team members and review routing from TEAM.md\nconst teamMembers = {};\nconst teamRouting = [];\ntry {\n  const raw = $('Fetch TEAM.md').first().json;\n  if (raw.content) {\n    const md = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n    const memberRows = md.split('\\n').filter(l => l.includes('|') && l.includes('@'));\n    for (const row of memberRows) {\n      const cols = row.split('|').map(s => s.trim()).filter(Boolean);\n      if (cols.length >= 3) {\n        const role = cols[1];\n        const handleMatch = cols[2].match(/@(\\w[\\w-]*)/);\n        if (handleMatch) teamMembers[role] = handleMatch[1];\n      }\n    }\n    const routingSection = md.match(/## Review Routing[^\\n]*\\n[\\s\\S]*?\\|[- |]+\\|\\n([\\s\\S]*?)(?=\\n## |\\s*$)/i);\n    if (routingSection) {\n      const rows = routingSection[1].trim().split('\\n').filter(l => l.includes('|'));\n      for (const row of rows) {\n        const cols = row.split('|').map(s => s.trim()).filter(Boolean);\n        if (cols.length >= 2) {\n          const pattern = cols[0].replace(/`/g, '').replace(/\\(.*\\)/, '').trim();\n          const role = cols[1].trim();\n          teamRouting.push({ pattern, role });\n        }\n      }\n    }\n  }\n} catch (e) {}\n\n// 3. Match changed files\nconst fileItems = $('Get Changed Files').all();\nconst filenames = fileItems.map(item => item.json.filename).filter(Boolean);\nlet requireHuman = false;\nconst reviewerRoles = new Set();\n\nfor (const filename of filenames) {\n  for (const sp of securityPaths) {\n    if (matchGlob(filename, sp)) { requireHuman = true; break; }\n  }\n  for (const route of teamRouting) {\n    if (route.pattern !== '*' && matchGlob(filename, route.pattern)) {\n      reviewerRoles.add(route.role);\n    }\n  }\n}\n\nif (requireHuman && reviewerRoles.size === 0) {\n  const defaultRoute = teamRouting.find(r => r.pattern === '*');\n  if (defaultRoute) reviewerRoles.add(defaultRoute.role);\n}\n\n// 4. Resolve roles to GitHub handles\nconst reviewers = [...reviewerRoles].map(r => teamMembers[r]).filter(Boolean);\nif (requireHuman && reviewers.length === 0) {\n  reviewers.push(...Object.values(teamMembers));\n}\n\nreturn [{ json: { body, pr_number: ctx.pr_number, repo: ctx.repo, require_human: requireHuman, reviewers } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2900,
+        300
+      ],
+      "id": "wf02-10",
+      "name": "Build Review Comment",
+      "notes": "Parses Claude's SUMMARY/details. Builds comment with AI header. Dynamically determines require_human from CLAUDE.md security paths and resolves reviewers from TEAM.md routing table."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.pr_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3120,
+        300
+      ],
+      "id": "wf02-11",
+      "name": "Post Review Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts the AI code review comment on the PR.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-human",
+              "leftValue": "={{ $('Build Review Comment').first().json.require_human }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3340,
+        300
+      ],
+      "id": "wf02-12",
+      "name": "Needs Human Review?",
+      "notes": "Routes to human review request if security-critical paths were touched (per CLAUDE.md), otherwise auto-approves."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Build Review Comment').first().json.repo }}/pulls/{{ $('Build Review Comment').first().json.pr_number }}/requested_reviewers",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ reviewers: $('Build Review Comment').first().json.reviewers }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3560,
+        200
+      ],
+      "id": "wf02-13",
+      "name": "Request Human Review",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Requests review from the appropriate team members based on TEAM.md review routing.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Build Review Comment').item.json.repo }}/pulls/{{ $('Build Review Comment').item.json.pr_number }}/reviews",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"event\": \"APPROVE\", \"body\": \"AI review passed. No issues found.\"}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3780,
+        400
+      ],
+      "id": "wf02-14",
+      "name": "Approve PR",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Auto-approves the PR when no security-critical paths are touched and AI review found no issues. May fail with 422 if the same account opened the PR (GitHub limitation); the ai-review-passed label provides the signal instead.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Build Review Comment').first().json.repo }}/issues/{{ $('Build Review Comment').first().json.pr_number }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"labels\": [\"ai-review-passed\"]}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3560,
+        400
+      ],
+      "id": "wf02-15",
+      "name": "Add Label",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Adds ai-review-passed label to signal that the AI review passed without issues.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract PR Info').first().json.repo }}/contents/TEAM.md?ref={{ encodeURIComponent($('Extract PR Info').first().json.head_branch) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        300
+      ],
+      "id": "wf02-ctx3",
+      "name": "Fetch TEAM.md",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches TEAM.md from the PR branch for reviewer routing. Non-fatal if missing."
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is PR Opened?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is PR Opened?": {
+      "main": [
+        [
+          {
+            "node": "Extract PR Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PR Info": {
+      "main": [
+        [
+          {
+            "node": "Post Starting Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Starting Comment": {
+      "main": [
+        [
+          {
+            "node": "Get Changed Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Changed Files": {
+      "main": [
+        [
+          {
+            "node": "Get Full Diff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Full Diff": {
+      "main": [
+        [
+          {
+            "node": "Check Security Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Security Paths": {
+      "main": [
+        [
+          {
+            "node": "Fetch CLAUDE.md",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch CLAUDE.md": {
+      "main": [
+        [
+          {
+            "node": "Fetch REVIEW.md",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch REVIEW.md": {
+      "main": [
+        [
+          {
+            "node": "Fetch TEAM.md",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Body": {
+      "main": [
+        [
+          {
+            "node": "Claude Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Review": {
+      "main": [
+        [
+          {
+            "node": "Build Review Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Review Comment": {
+      "main": [
+        [
+          {
+            "node": "Post Review Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Review Comment": {
+      "main": [
+        [
+          {
+            "node": "Needs Human Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Human Review?": {
+      "main": [
+        [
+          {
+            "node": "Request Human Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Label": {
+      "main": [
+        [
+          {
+            "node": "Approve PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch TEAM.md": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null
+}

@@ -22,202 +22,504 @@ In n8n **Settings > Credentials**, create:
 
 | Credential | Type | How to Get |
 | --- | --- | --- |
-| **GitHub API** | GitHub OAuth App or PAT | GitHub > Settings > Developer Settings > PATs. Scopes: `repo`, `project`, `workflow` |
+| **GitHub API** | GitHub OAuth App or PAT | GitHub > Settings > Developer Settings > PATs. Scopes: `repo`, `project`, `workflow`, `actions:read` |
 | **Anthropic API** | Header Auth (name: `x-api-key`) | [console.anthropic.com](https://console.anthropic.com/) > API Keys |
+| **n8n Internal API** | Header Auth (name: `X-N8N-API-KEY`) | n8n > Settings > API > Create API Key. Used by workflow 05 to self-track execution costs |
 | **Slack** *(optional)* | Slack OAuth | Slack app with `chat:write` scope for notifications |
 
-## 3. GitHub Webhook
+## 3. GitHub Webhooks
 
-In your repo **Settings > Webhooks**:
+Each n8n workflow has its own webhook endpoint. WF01 uses an **org-level webhook** for board events; the others use **repo-level webhooks**.
 
-- **Payload URL:** `https://n8n.yourdomain.com/webhook/github`
+| Webhook | Scope | Payload URL | Events |
+| --- | --- | --- | --- |
+| Board Events (WF01) | **Org-level** | `https://n8n.yourdomain.com/webhook/devllmops-github-board` | `projects_v2_item` |
+| PR AI Review (WF02) | Repo-level | `https://n8n.yourdomain.com/webhook/devllmops-github-pr` | `pull_request` |
+| CI Failure Auto-Fix (WF03) | Repo-level | `https://n8n.yourdomain.com/webhook/devllmops-github-ci` | `check_suite` |
+
+For all webhooks, set:
+
 - **Content type:** `application/json`
-- **Secret:** generate with `openssl rand -hex 32`, save it for n8n
-- **Events:** Issues, Pull requests, Check suites, Push
+- **SSL verification:** enabled
 
-In every n8n GitHub webhook trigger node, set the same secret for signature verification.
+### Creating webhooks via CLI
+
+```bash
+# Org-level webhook for workflow 01 - Board-Driven Intent Analysis
+# Requires admin:org_hook scope: gh auth refresh -h github.com -s admin:org_hook
+gh api /orgs/YOUR_ORG/hooks --method POST --input - <<'EOF'
+{
+  "name": "web",
+  "active": true,
+  "events": ["projects_v2_item"],
+  "config": {
+    "url": "https://n8n.yourdomain.com/webhook/devllmops-github-board",
+    "content_type": "json",
+    "insecure_ssl": "0"
+  }
+}
+EOF
+
+# Repo-level webhook for workflow 02 - PR AI Review
+gh api repos/OWNER/REPO/hooks --method POST --input - <<'EOF'
+{
+  "name": "web",
+  "active": true,
+  "events": ["pull_request"],
+  "config": {
+    "url": "https://n8n.yourdomain.com/webhook/devllmops-github-pr",
+    "content_type": "json"
+  }
+}
+EOF
+
+# Repo-level webhook for workflow 03 - CI Failure Auto-Fix
+gh api repos/OWNER/REPO/hooks --method POST --input - <<'EOF'
+{
+  "name": "web",
+  "active": true,
+  "events": ["check_suite"],
+  "config": {
+    "url": "https://n8n.yourdomain.com/webhook/devllmops-github-ci",
+    "content_type": "json"
+  }
+}
+EOF
+```
+
+Workflow 04 (Production Alert) uses a separate webhook at `/webhook/devllmops-production-alert` — point your monitoring tool (Prometheus, Grafana, Datadog, UptimeKuma) to it directly. Workflow 05 (Daily Cost Report) runs on a cron schedule and does not need a webhook.
 
 ## 4. Core Workflows
 
-### Workflow 1: New Intent > Agent Analysis
+All AI-generated comments follow a consistent format: a robot header (`> 🤖 This is an automated message from the DevLLMOps AI Agent`), a bold one-sentence summary, and full details in a collapsed `<details>` section. All HTTP nodes include retry (3x) and timeouts (30s GitHub, 120s Claude).
 
-When a GitHub issue is created with the `intent` label, Claude analyzes it and posts an implementation plan as a comment.
+### Workflow 1: Board-Driven Intent Analysis + Auto-Develop
+
+When an issue is moved to **AI Ready** on the GitHub Projects board, the workflow creates a typed feature branch, posts a "starting" comment, moves the item to **In Progress**, then asks Claude for an implementation plan. If the issue has the **auto-develop** checkbox checked, the workflow also generates code using Claude Sonnet 4.6, commits the implementation files to the branch, and posts a summary comment. CI then runs automatically, and on success WF03 creates a PR.
+
+The trigger is an org-level `projects_v2_item` webhook (not a repo-level `issues` webhook). The workflow validates that the status field was changed to "AI Ready" before proceeding -- all other column transitions are silently ignored.
+
+Branch names are derived from issue labels:
+
+| Label | Prefix | Example |
+| --- | --- | --- |
+| bug | `b/` | `b/#12-fix-login-crash` |
+| feature | `f/` | `f/#5-add-dark-mode` |
+| refactoring | `r/` | `r/#7-extract-utils` |
+| operations | `o/` | `o/#9-upgrade-nginx` |
+| docs & research | `d/` | `d/#11-api-docs` |
+| enhancement *(default)* | `e/` | `e/#3-replace-question-list` |
 
 ```mermaid
 flowchart TD
     A["`**Webhook**
-    GitHub issue event`"] --> B{"`**IF**
-    action = opened
-    AND intent label?`"}
+    projects_v2_item event`"] --> B{"`**IF**
+    action = edited
+    AND Status field
+    AND Issue
+    AND correct project?`"}
     B -- No --> Z[End]
     B -- Yes --> C["`**HTTP Request**
-    GET issue body`"]
-    C --> D["`**HTTP Request**
+    GraphQL: fetch item
+    status + issue details`"]
+    C --> D{"`**Code**
+    Status = AI Ready?
+    (returns [] if not)`"}
+    D -- No --> Z
+    D -- Yes --> E["`**Code**
+    Prepare context
+    (branch name from labels)`"]
+    E --> F["`**HTTP Request**
+    POST starting comment`"]
+    F --> G["`**HTTP Request**
+    GraphQL: move to
+    In Progress`"]
+    G --> H["`**HTTP Request**
+    GET main HEAD SHA`"]
+    H --> I["`**HTTP Request**
+    Create feature branch`"]
+    I --> J["`**Code**
+    Build Claude request`"]
+    J --> K["`**HTTP Request**
     POST Anthropic API`"]
-    D --> E["`**HTTP Request**
-    POST issue comment`"]
+    K --> L["`**Code**
+    Format analysis comment`"]
+    L --> M["`**HTTP Request**
+    POST analysis comment`"]
+    M --> N{"`**IF**
+    auto-develop
+    checked?`"}
+    N -- No --> Z2[End]
+    N -- Yes --> O["`**HTTP Request**
+    GET CLAUDE.md`"]
+    O --> P["`**HTTP Request**
+    GET file tree`"]
+    P --> Q["`**Code**
+    Select source files`"]
+    Q --> R["`**HTTP Request**
+    GET file contents ×N`"]
+    R --> S["`**Code**
+    Build implementation prompt`"]
+    S --> T["`**HTTP Request**
+    POST Claude Sonnet 4.6
+    (code generation, 5min)`"]
+    T --> U["`**Code**
+    Parse FILE blocks`"]
+    U --> V["`**HTTP Request**
+    GET current SHAs ×M`"]
+    V --> W["`**Code**
+    Build commit payloads`"]
+    W --> X["`**HTTP Request**
+    PUT commit files ×M`"]
+    X --> Y["`**Code**
+    Build summary comment`"]
+    Y --> ZZ["`**HTTP Request**
+    POST implementation comment`"]
 ```
 
 | Step | n8n Node | Details |
 | --- | --- | --- |
-| **Trigger** | Webhook | GitHub issue event, filtered to `opened` action |
-| **Filter** | IF | `event.action == "opened"` AND `"intent" in labels` |
-| **Fetch issue** | HTTP Request | `GET /repos/{owner}/{repo}/issues/{number}` with GitHub credential |
-| **AI analysis** | HTTP Request | `POST api.anthropic.com/v1/messages` -- model: `claude-haiku-4-5-20251001`, prompt asks for implementation approach, affected files, risks |
-| **Post comment** | HTTP Request | `POST /repos/{owner}/{repo}/issues/{number}/comments` -- body: `## Agent Analysis\n\n{{ response }}` |
+| **Trigger** | Webhook | Org-level `projects_v2_item` event on path `/webhook/devllmops-github-board` |
+| **Filter** | IF | `action == "edited"` AND `field_node_id == STATUS_FIELD_ID` AND `content_type == "Issue"` AND `project_node_id` matches |
+| **Fetch item** | HTTP Request | GraphQL query: `node(id: item_id)` fetches Status name, issue number/title/body/labels/repo |
+| **Validate AI Ready** | Code | Returns `[]` (stops execution) if status !== "AI Ready". Extracts issue data + `project_item_node_id` |
+| **Prepare context** | Code | Maps issue labels to branch prefix (`b/f/r/o/d/e`), computes `{prefix}/#N-slug` |
+| **Starting comment** | HTTP Request | Posts acknowledgment with branch name in collapsible details |
+| **Move to In Progress** | HTTP Request | GraphQL mutation: `updateProjectV2ItemFieldValue` sets status to In Progress. Loop-safe: the resulting `projects_v2_item.edited` event is ignored because Validate AI Ready returns `[]` for non-AI-Ready statuses |
+| **Create branch** | HTTP Request | `GET .../git/ref/heads/main` then `POST .../git/refs` to create the typed branch |
+| **AI analysis** | Code + HTTP | Builds request body safely in JS (avoids JSON interpolation issues), calls `claude-haiku-4-5-20251001` |
+| **Post analysis** | Code + HTTP | Parses `SUMMARY:` line from Claude response, posts with AI header + collapsed details |
+| **Check auto-develop** | IF | Checks if issue body contains `[x] Yes, auto-develop` checkbox |
+| **Fetch context** | HTTP Request x2 | Fetches CLAUDE.md (neverError) and recursive file tree from branch |
+| **Select files** | Code | Filters tree to `app/src/**` + root config files, text extensions, capped at 25 files |
+| **Fetch sources** | HTTP Request | Fetches each selected file's base64 content from branch (per item) |
+| **Code generation** | Code + HTTP | Builds prompt with CLAUDE.md + issue + analysis + all source files (80K cap), calls `claude-sonnet-4-6` with 16K max tokens and 5-minute timeout |
+| **Parse + commit** | Code + HTTP | Regex-parses `FILE/ACTION/CONTENT/FILE_END` blocks, fetches current SHAs, commits each file with `[auto-develop]` prefix |
+| **Summary comment** | Code + HTTP | Aggregates committed files into a summary comment on the issue |
 
 ### Workflow 2: PR Opened > AI Review + Routing
 
-When a PR is opened, Claude reviews the diff and either approves or flags for human review.
+When a PR is opened, the workflow posts a "starting review" comment, fetches the diff, checks for security-critical paths, fetches the repo's `CLAUDE.md` and `REVIEW.md` for project-specific context and review guidelines, asks Claude for a code review, then either auto-approves or requests human review.
+
+The review prompt is driven by two optional repo files:
+
+- **CLAUDE.md** -- project context, conventions, security-critical paths (provides the reviewer with project knowledge)
+- **REVIEW.md** -- review-specific guidelines: what to check, severity levels, project-specific rules (controls what the reviewer looks for)
+
+If `REVIEW.md` is absent, the reviewer falls back to a default checklist (bugs, OWASP Top 10, error handling, performance). A template is available at [`templates/REVIEW.md`](../templates/REVIEW.md).
 
 ```mermaid
 flowchart TD
     A["`**Webhook**
-    GitHub PR opened`"] --> B["`**HTTP Request**
+    GitHub PR opened`"] --> B{"`**IF**
+    action = opened?`"}
+    B -- No --> Z[End]
+    B -- Yes --> C["`**Code**
+    Extract PR info`"]
+    C --> D["`**HTTP Request**
+    POST starting comment`"]
+    D --> E["`**HTTP Request**
     GET changed files`"]
-    B --> C["`**HTTP Request**
+    E --> F["`**HTTP Request**
     GET full diff`"]
-    C --> D{"`**IF**
-    Touches security
-    critical paths?`"}
-    D -- Yes --> E1["`**Set**
-    require_human = true`"]
-    D -- No --> E2["`**Set**
-    require_human = false`"]
-    E1 --> F["`**HTTP Request**
-    POST Anthropic API
-    (AI review)`"]
-    E2 --> F
-    F --> G["`**HTTP Request**
+    F --> G["`**Code**
+    Check security paths
+    + truncate diff`"]
+    G --> H["`**HTTP Request**
+    GET CLAUDE.md
+    (neverError)`"]
+    H --> I["`**HTTP Request**
+    GET REVIEW.md
+    (neverError)`"]
+    I --> I2["`**HTTP Request**
+    GET TEAM.md
+    (neverError)`"]
+    I2 --> J["`**Code**
+    Build Claude request
+    (with context files)`"]
+    J --> K["`**HTTP Request**
+    POST Anthropic API`"]
+    K --> L["`**Code**
+    Format review comment
+    + resolve routing`"]
+    L --> M["`**HTTP Request**
     POST review comment`"]
-    G --> H{"`**IF**
-    require_human OR
-    issues found?`"}
-    H -- Yes --> I["`**HTTP Request**
-    Request human review
-    (Quality Sentinel)`"]
-    H -- No --> J["`**HTTP Request**
+    M --> N{"`**IF**
+    require_human?`"}
+    N -- Yes --> O["`**HTTP Request**
+    Request human review`"]
+    N -- No --> P2["`**HTTP Request**
+    Add label
+    ai-review-passed`"]
+    P2 --> P["`**HTTP Request**
     Approve PR`"]
 ```
 
 | Step | n8n Node | Details |
 | --- | --- | --- |
-| **Trigger** | Webhook | GitHub PR event, filtered to `opened` targeting `main` |
-| **Get files** | HTTP Request | `GET /repos/{owner}/{repo}/pulls/{number}/files` |
-| **Get diff** | HTTP Request | `GET /repos/{owner}/{repo}/pulls/{number}.diff` (Accept: `application/vnd.github.v3.diff`), truncate to 50K chars |
-| **Security check** | IF | Check filenames against: `auth/`, `payments/`, `deploy*`, `workflows/` |
-| **Set flag** | Set | `require_human = true/false` |
-| **AI review** | HTTP Request | `POST api.anthropic.com/v1/messages` -- model: `claude-haiku-4-5-20251001`, reviews for bugs, OWASP Top 10, missing error handling |
-| **Post comment** | HTTP Request | `POST /repos/{owner}/{repo}/issues/{number}/comments` -- body: `## AI Review\n\n{{ response }}` |
-| **Route** | IF | If `require_human` or issues found: request review from Quality Sentinel (GitHub handle from `TEAM.md`). Otherwise: approve PR via `POST /pulls/{number}/reviews` with `"event": "APPROVE"` |
+| **Trigger** | Webhook | GitHub PR event on path `/webhook/devllmops-github-pr` |
+| **Filter** | IF | `action == "opened"` |
+| **Starting comment** | HTTP Request | Posts acknowledgment with PR number and branch |
+| **Get diff** | HTTP Request | `GET /pulls/{number}` with `Accept: application/vnd.github.v3.diff`, truncated to 50K chars |
+| **Truncate diff** | Code | Truncates diff to 50K chars and passes through PR context |
+| **Fetch CLAUDE.md** | HTTP Request | `GET /repos/{repo}/contents/CLAUDE.md?ref={head_branch}` with `neverError: true`. Provides project context and security-critical paths |
+| **Fetch REVIEW.md** | HTTP Request | `GET /repos/{repo}/contents/REVIEW.md?ref={head_branch}` with `neverError: true`. Provides review guidelines; falls back to defaults if absent |
+| **Fetch TEAM.md** | HTTP Request | `GET /repos/{repo}/contents/TEAM.md?ref={head_branch}` with `neverError: true`. Provides reviewer routing table |
+| **AI review** | Code + HTTP | Decodes all three files from base64, builds prompt with project context + review guidelines + team context, calls `claude-haiku-4-5-20251001` |
+| **Build comment + routing** | Code | Parses Claude response, then dynamically determines `require_human` by matching changed files against CLAUDE.md security-critical paths and resolves reviewers from TEAM.md routing table |
+| **Add label** | HTTP Request | Adds `ai-review-passed` label to signal AI review passed (false branch only) |
+| **Route** | IF | If `require_human`: request review from team members resolved via TEAM.md. Otherwise: add label + auto-approve via `POST /pulls/{number}/reviews` (approve may fail with 422 if the same account opened the PR; the label provides the signal) |
 
-### Workflow 3: CI Failure > Agent Auto-Fix
+### Workflow 3: CI Check Suite > Auto-Fix + Auto-PR
 
-When CI checks fail on a PR, Claude reads the logs and suggests a fix.
+Handles both CI failures and successes on feature branches. **On failure:** finds the failed run by commit SHA, posts a "investigating" comment, downloads logs (handling GitHub's redirect-based log endpoint), asks Claude for a diagnosis, and **automatically commits a fix** if Claude provides a single-file replacement. An `[auto-fix]` commit message prefix prevents infinite fix-fail-fix loops. **On success:** automatically creates a pull request (if none exists) so the AI Review workflow (WF02) is triggered.
 
 ```mermaid
 flowchart TD
     A["`**Webhook**
-    check_suite failed`"] --> B["`**HTTP Request**
-    GET failed jobs`"]
-    B --> C["`**HTTP Request**
-    GET failure logs`"]
-    C --> D["`**HTTP Request**
-    POST Anthropic API
-    (diagnose failure)`"]
+    check_suite completed`"] --> B{"`**IF**
+    conclusion = failure?`"}
+    B -- Yes --> C["`**HTTP Request**
+    Find runs by SHA`"]
+    C --> D["`**Code**
+    Extract run info
+    + comment target
+    + skip_autofix flag`"]
     D --> E["`**HTTP Request**
-    POST PR comment`"]
+    POST starting comment`"]
+    E --> F["`**HTTP Request**
+    GET failed jobs`"]
+    F --> G["`**Code**
+    Extract failed job
+    + step summary`"]
+    G --> H["`**HTTP Request**
+    GET log redirect URL`"]
+    H --> I["`**Code**
+    Extract redirect URL`"]
+    I --> J["`**HTTP Request**
+    Download logs (no auth)`"]
+    J --> K["`**Code**
+    Build Claude request
+    (with AUTO_FIX prompt)`"]
+    K --> L["`**HTTP Request**
+    POST Anthropic API`"]
+    L --> M["`**Code**
+    Format analysis comment`"]
+    M --> N["`**HTTP Request**
+    POST analysis comment`"]
+    N --> O["`**Code**
+    Parse AUTO_FIX markers`"]
+    O --> P{"`**IF**
+    has_fix AND
+    NOT skip_autofix?`"}
+    P -- No --> Z2[End]
+    P -- Yes --> Q["`**HTTP Request**
+    GET file content + SHA`"]
+    Q --> R["`**Code**
+    Apply fix + build
+    commit body`"]
+    R --> S["`**HTTP Request**
+    PUT commit fix`"]
+    S --> T["`**HTTP Request**
+    POST fix comment`"]
+
+    B -- No --> U["`**Code**
+    Extract branch info
+    + issue number`"]
+    U --> V{"`**IF**
+    should create PR?`"}
+    V -- No --> Z3[End]
+    V -- Yes --> W["`**HTTP Request**
+    Check existing PR`"]
+    W --> X["`**Code**
+    Build PR title + body`"]
+    X --> Y{"`**IF**
+    no PR yet?`"}
+    Y -- No --> Z4[End]
+    Y -- Yes --> AA["`**HTTP Request**
+    Create PR`"]
+    AA --> AB["`**HTTP Request**
+    Post PR comment on issue`"]
 ```
+
+#### Failure path (auto-fix)
 
 | Step | n8n Node | Details |
 | --- | --- | --- |
-| **Trigger** | Webhook | GitHub `check_suite` event, `conclusion = "failure"` |
-| **Get jobs** | HTTP Request | `GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs` |
-| **Get logs** | HTTP Request | `GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs`, truncate to 30K chars |
-| **AI diagnosis** | HTTP Request | `POST api.anthropic.com/v1/messages` -- model: `claude-sonnet-4-6`, prompt asks for specific file + line fix |
-| **Post comment** | HTTP Request | `POST /repos/{owner}/{repo}/issues/{pr_number}/comments` -- body: `## CI Failure Analysis\n\n{{ response }}` |
+| **Trigger** | Webhook | GitHub `check_suite` event on path `/webhook/devllmops-github-ci` |
+| **Filter** | IF | `conclusion == "failure"` |
+| **Find runs** | HTTP Request | `GET /actions/runs?head_sha={sha}&status=failure` (note: `check_suite.id` is **not** a run ID) |
+| **Comment target** | Code | Extracts PR number from `check_suite.pull_requests`, or issue number from branch name (`{prefix}/#N-...`). Sets `skip_autofix = true` if head commit starts with `[auto-fix]` |
+| **Get logs** | HTTP Request x2 | First request gets the 302 redirect URL (with `followRedirects: false`, `neverError: true`), second request downloads the logs **without auth** (GitHub's signed URL rejects forwarded auth headers) |
+| **AI diagnosis** | Code + HTTP | `claude-sonnet-4-6` analyzes logs and step summary, returns root cause + exact diff fix + optional `AUTO_FIX` block |
+| **Post analysis** | Code + HTTP | Parses `SUMMARY:` line, posts with AI header, collapsed details, and link to the failed run |
+| **Parse auto-fix** | Code | Extracts `AUTO_FIX_FILE`, `AUTO_FIX_OLD`, `AUTO_FIX_NEW` markers from Claude response |
+| **Has fix?** | IF | Proceeds only if `has_fix == true` AND `skip_autofix == false` (prevents infinite loops) |
+| **Get file** | HTTP Request | `GET /repos/{owner}/{repo}/contents/{path}?ref={branch}` — fetches base64 content + SHA |
+| **Apply fix** | Code | Base64-decodes file, applies string replacement, re-encodes, builds PUT body with `[auto-fix]` commit message |
+| **Commit fix** | HTTP Request | `PUT /repos/{owner}/{repo}/contents/{path}` with new content, SHA, and branch |
+| **Post fix comment** | HTTP Request | Posts comment confirming the auto-fix commit with file and branch details |
+
+#### Success path (auto-PR)
+
+| Step | n8n Node | Details |
+| --- | --- | --- |
+| **Extract branch info** | Code | Validates `conclusion == "success"`, skips protected branches (`main`, `master`, `release`, `develop`), extracts repo/owner/branch/issue_number using branch regex from wf03-04 |
+| **Should create PR?** | IF | Proceeds only if `should_create_pr == true` |
+| **Check existing PR** | HTTP Request | `GET /repos/{repo}/pulls?head={owner}:{branch}&state=open` — prevents duplicate PRs |
+| **Build PR body** | Code | Humanizes branch slug into title (e.g. `f/#5-add-dark-mode` -> `Feature: Add Dark Mode (#5)`), builds body with AI header + `Closes #N` |
+| **No PR yet?** | IF | Proceeds only if `has_existing_pr == false` |
+| **Create PR** | HTTP Request | `POST /repos/{repo}/pulls` with title, body, head=branch, base=main. Triggers WF02 via `pull_request.opened` webhook |
+| **Post PR comment** | HTTP Request | Posts comment on linked issue confirming PR creation (`neverError: true` for branches without issue numbers) |
 
 ### Workflow 4: Production Alert > Agent Investigation
 
-When your monitoring fires an alert, Claude investigates and creates an issue.
+When your monitoring fires an alert, Claude investigates and creates a GitHub issue with the analysis.
 
 ```mermaid
 flowchart TD
     A["`**Webhook**
-    Monitoring alert
-    (Prometheus/Grafana/
-    Datadog/UptimeKuma)`"] --> B["`**HTTP Request**
-    POST Anthropic API
-    (investigate alert)`"]
-    B --> C["`**HTTP Request**
-    POST GitHub issue
-    with analysis`"]
-    C --> D["`**Slack** *(optional)*
-    Notify #incidents`"]
+    Monitoring alert`"] --> B["`**Code**
+    Normalize alert payload`"]
+    B --> C["`**Code**
+    Build Claude request`"]
+    C --> D["`**HTTP Request**
+    POST Anthropic API`"]
+    D --> E["`**Code**
+    Build issue body`"]
+    E --> F["`**HTTP Request**
+    POST GitHub issue`"]
 ```
 
 | Step | n8n Node | Details |
 | --- | --- | --- |
-| **Trigger** | Webhook | Incoming alert from Prometheus, Grafana, Datadog, or UptimeKuma |
-| **AI investigation** | HTTP Request | `POST api.anthropic.com/v1/messages` -- model: `claude-sonnet-4-6`, prompt includes alert name, severity, details, service |
-| **Create issue** | HTTP Request | `POST /repos/{owner}/{repo}/issues` -- title: `[ALERT] {{ alert_name }}`, labels: `incident`, `intent`, body includes agent analysis and tags Quality Sentinel |
-| **Notify** | Slack *(optional)* | Post to `#incidents` channel |
+| **Trigger** | Webhook | Incoming alert on path `/webhook/devllmops-production-alert` from Prometheus, Grafana, Datadog, or UptimeKuma |
+| **Normalize** | Code | Extracts `alert_name`, `severity`, `description`, `service` from various monitoring payload formats |
+| **AI investigation** | Code + HTTP | `claude-sonnet-4-6` provides root cause, impact assessment, mitigation steps, follow-up actions |
+| **Create issue** | Code + HTTP | Title: `[ALERT] {alert_name}`, labels: `incident` + `intent`, body with AI header + collapsed details. The `intent` label triggers Workflow 1 for further analysis |
 
 ### Workflow 5: Daily Cost Report
 
-Scheduled workflow that tracks AI token spend and alerts on overruns.
+Scheduled workflow that self-tracks AI token spend from n8n's own execution history and alerts on cost overruns. No external usage API required -- costs are estimated from execution counts per workflow and known model pricing.
 
 ```mermaid
 flowchart TD
     A["`**Cron Trigger**
     Daily 09:00 UTC`"] --> B["`**HTTP Request**
-    GET Anthropic usage`"]
-    B --> C["`**Function**
+    GET n8n workflows`"]
+    B --> C["`**HTTP Request**
+    GET n8n executions`"]
+    C --> D["`**Code**
     Calculate daily cost
     vs 7-day average`"]
-    C --> D{"`**IF**
+    D --> E{"`**IF**
     Cost > 150%
     of average?`"}
-    D -- Yes --> E["`**Slack**
-    Alert AI Ops Lead`"]
-    D -- No --> F["`**Slack**
-    Daily summary
-    to #devllmops`"]
-    E --> F
+    E -- Yes --> F["`**Code + HTTP**
+    Create cost alert issue`"]
+    E -- No --> G["`**Code + HTTP**
+    Create daily summary issue`"]
+    F --> G
 ```
 
 | Step | n8n Node | Details |
 | --- | --- | --- |
 | **Trigger** | Cron | Daily at 09:00 UTC |
-| **Fetch usage** | HTTP Request | `GET api.anthropic.com/v1/organizations/{org_id}/usage` (check Anthropic docs for exact endpoint) |
-| **Calculate** | Function | `input_tokens * price + output_tokens * price`, compare to 7-day rolling average |
-| **Threshold check** | IF | `daily_cost > 1.5 * rolling_average` |
-| **Alert** | Slack | If over threshold: alert AI Ops Lead / Product Architect with spend amount |
-| **Summary** | Slack | Post to `#devllmops`: `AI usage yesterday: $X | 7-day avg: $Y | Month-to-date: $Z` |
+| **Fetch workflows** | HTTP Request | `GET /api/v1/workflows` via n8n Internal API credential -- maps workflow IDs to names and AI models |
+| **Fetch executions** | HTTP Request | `GET /api/v1/executions?limit=250&status=success` -- last 250 successful executions |
+| **Calculate** | Code | Filters to last 24h, estimates tokens per execution based on model (Haiku for WF 01/02, Sonnet for WF 03/04), stores daily costs in `staticData` for a real 7-day rolling average |
+| **Threshold check** | IF | `daily_cost > 1.5 * rolling_average` (requires at least 2 days of history) |
+| **Alert / Summary** | Code + HTTP | Creates a GitHub issue with AI header, one-line cost summary, and collapsible breakdown by workflow. Labels: `cost-alert` or `daily-report` |
 
-## 5. Connecting Workflows to the Projects Board
+## 5. Import Workflow Templates
 
-To move issues/PRs across the GitHub Projects board (Intent > In Progress > Verification > etc.), use the GitHub GraphQL API in HTTP Request nodes:
+Ready-to-import n8n workflow JSON files are available in the [`n8n/`](../n8n/) directory:
 
-```text
-POST https://api.github.com/graphql
+| File | Workflow |
+| --- | --- |
+| [`01-intent-analysis.json`](../n8n/01-intent-analysis.json) | Board-Driven Intent Analysis + Auto-Develop |
+| [`02-pr-ai-review.json`](../n8n/02-pr-ai-review.json) | PR Opened > AI Review + Routing |
+| [`03-ci-failure-autofix.json`](../n8n/03-ci-failure-autofix.json) | CI Failure > Agent Auto-Fix |
+| [`04-production-alert.json`](../n8n/04-production-alert.json) | Production Alert > Agent Investigation |
+| [`05-daily-cost-report.json`](../n8n/05-daily-cost-report.json) | Daily Cost Report |
 
-Body:
-{
-  "query": "mutation {
-    updateProjectV2ItemFieldValue(input: {
-      projectId: \"PROJECT_ID\"
-      itemId: \"ITEM_ID\"
-      fieldId: \"STATUS_FIELD_ID\"
-      value: { singleSelectOptionId: \"OPTION_ID\" }
-    }) { projectV2Item { id } }
-  }"
+### How to import
+
+1. Open n8n and go to **Workflows > Import from File**
+2. Select the JSON file for the workflow you want
+3. After import, open each node with a credential reference and select your own credentials (look for nodes marked `REPLACE_ME`)
+4. Find-and-replace the following placeholders across all workflows:
+
+| Placeholder | Replace with |
+| --- | --- |
+| `REPLACE_ME` (credential IDs) | Select your own credentials in each node |
+| `OWNER/REPO` | Your GitHub `org/repo` (e.g., `MyOrg/my-app`) |
+| `N8N_HOST` | Your n8n hostname (e.g., `n8n.yourdomain.com`) -- used by workflow 05 |
+| `REPLACE_WITH_QUALITY_SENTINEL_HANDLE` | Your Quality Sentinel's GitHub username (workflow 02) |
+
+5. Activate the workflow
+
+## 6. Connecting Workflows to the Projects Board
+
+### GitHub Projects Board
+
+| Column           | Meaning                                              |
+| ---------------- | ---------------------------------------------------- |
+| **Backlog**      | New items, discussion and refining                   |
+| **Ready**        | Refined and prioritized issues ready to be worked on |
+| **AI Ready**     | Context complete, triggers AI agent (WF01)           |
+| **In Progress**  | Human or Agent working and Context Engineer steering |
+| **Verification** | CI + AI review running                               |
+| **Human Review** | Flagged for human attention (security, architecture) |
+| **Done**         | Merged and complete                                  |
+
+New issues are auto-added to **Backlog**. Moving an issue to **AI Ready** triggers WF01 (Intent Analysis + Auto-Develop). The agent automatically moves the item to **In Progress** once it starts working. Deployment to production is the Product Architect's responsibility and is not tracked as a separate board column. See [GitHub Setup](github-setup.md).
+
+To move issues/PRs across the board programmatically, use the GitHub GraphQL API in HTTP Request nodes.
+
+### Reading an item's current status
+
+```graphql
+query($id: ID!) {
+  node(id: $id) {
+    ... on ProjectV2Item {
+      id
+      fieldValueByName(name: "Status") {
+        ... on ProjectV2ItemFieldSingleSelectValue {
+          name
+          optionId
+        }
+      }
+      content {
+        ... on Issue {
+          number
+          title
+          body
+          labels(first: 10) { nodes { name } }
+          repository { nameWithOwner }
+        }
+      }
+    }
+  }
 }
 ```
 
-Get the IDs once via `gh project field-list` and hardcode them in n8n or store as environment variables.
+### Transitioning an item to a new status
 
-## 6. Security Notes
+```graphql
+mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+  updateProjectV2ItemFieldValue(input: {
+    projectId: $projectId
+    itemId: $itemId
+    fieldId: $fieldId
+    value: { singleSelectOptionId: $optionId }
+  }) { projectV2Item { id } }
+}
+```
+
+Get the IDs once via `gh project field-list` and hardcode them in n8n or store as environment variables. WF01 uses both queries above: it reads the item status to validate "AI Ready", then transitions it to "In Progress" after the agent starts working.
+
+## 7. Security Notes
 
 - **HTTPS required** -- n8n receives webhooks with repo data; always use TLS
 - **Verify webhook signatures** -- set the GitHub webhook secret in n8n trigger nodes

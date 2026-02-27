@@ -1,0 +1,1138 @@
+{
+  "name": "DevLLMOps 01 - Intent Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "devllmops-github-board",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "id": "wf01-01",
+      "name": "GitHub Webhook",
+      "webhookId": "devllmops-github-board",
+      "notes": "Receives projects_v2_item events from the DevLLMOps org-level webhook."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-edited",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "edited",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "cond-field",
+              "leftValue": "={{ $json.body.changes?.field_value?.field_node_id ?? '' }}",
+              "rightValue": "PVTSSF_lADOD8C1ss4BQSIqzg-ctKo",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "cond-issue",
+              "leftValue": "={{ $json.body.projects_v2_item?.content_type ?? '' }}",
+              "rightValue": "Issue",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "cond-project",
+              "leftValue": "={{ $json.body.projects_v2_item?.project_node_id ?? '' }}",
+              "rightValue": "PVT_kwDOD8C1ss4BQSIq",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        300
+      ],
+      "id": "wf01-02",
+      "name": "Is Status Change?",
+      "notes": "Only proceed if action=edited AND the Status field changed AND content is an Issue AND it belongs to the DevLLMOps project."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/graphql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: 'query($id: ID!) { node(id: $id) { ... on ProjectV2Item { id fieldValueByName(name: \"Status\") { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } } content { ... on Issue { number title body labels(first: 10) { nodes { name } } repository { nameWithOwner } } } } } }', variables: { id: $('GitHub Webhook').item.json.body.projects_v2_item.node_id } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "id": "wf01-03",
+      "name": "Fetch Item + Status",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "GraphQL query fetches the project item's current Status value plus the linked issue's number, title, body, labels, and repository.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const gql = $input.first().json;\nif (gql.errors || !gql.data || !gql.data.node) return [];\nconst item = gql.data.node;\nconst status = item.fieldValueByName ? item.fieldValueByName.name : '';\nif (status !== 'AI Ready') return [];\nconst content = item.content;\nreturn [{\n  json: {\n    issue_number: content.number,\n    issue_title: content.title,\n    issue_body: content.body || '',\n    labels: content.labels.nodes.map(l => l.name),\n    repo: content.repository.nameWithOwner,\n    project_item_node_id: item.id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "id": "wf01-gql",
+      "name": "Validate AI Ready + Extract",
+      "notes": "Returns [] (stops execution) if status is not 'AI Ready'. This prevents false triggers when items move to any other column. Extracts issue data and project_item_node_id for downstream nodes."
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst labels = (data.labels || []).map(l => l.toLowerCase());\nconst prefixMap = {\n  bug: 'b', feature: 'f', refactoring: 'r',\n  operations: 'o', 'docs & research': 'd', enhancement: 'e'\n};\nlet prefix = 'e';\nfor (const [label, p] of Object.entries(prefixMap)) {\n  if (labels.includes(label)) { prefix = p; break; }\n}\nconst slug = (data.issue_title || 'task')\n  .toLowerCase().replace(/[^a-z0-9]+/g, '-').substring(0, 40).replace(/-$/, '');\nconst branchName = `${prefix}/#${data.issue_number}-${slug}`;\nreturn [{ json: {\n  branch_name: branchName, repo: data.repo, issue_number: data.issue_number,\n  issue_title: data.issue_title, issue_body: data.issue_body,\n  project_item_node_id: data.project_item_node_id\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        300
+      ],
+      "id": "wf01-04",
+      "name": "Prepare Context",
+      "notes": "Maps issue labels to branch prefixes (b=bug, f=feature, r=refactoring, o=operations, d=docs, e=enhancement). Branch format: {prefix}/#N-slug. Passes project_item_node_id through for board transitions."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Picking up this issue \u2014 creating feature branch `' + $json.branch_name + '`.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **Branch:** `' + $json.branch_name + '`\\n- **Issue:** #' + $json.issue_number + '\\n\\nA detailed implementation analysis will follow shortly.\\n\\n</details>' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        300
+      ],
+      "id": "wf01-05",
+      "name": "Post Starting Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts initial comment acknowledging the issue and announcing the feature branch. Uses collapsible details.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/graphql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: 'mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { singleSelectOptionId: $optionId } }) { projectV2Item { id } } }', variables: { projectId: 'PVT_kwDOD8C1ss4BQSIq', itemId: $('Prepare Context').item.json.project_item_node_id, fieldId: 'PVTSSF_lADOD8C1ss4BQSIqzg-ctKo', optionId: '57816e25' } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        300
+      ],
+      "id": "wf01-board",
+      "name": "Move to In Progress",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "GraphQL mutation moves the project item from AI Ready to In Progress. This fires another projects_v2_item.edited event, but the Validate AI Ready node returns [] for non-AI-Ready statuses, preventing infinite loops.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Prepare Context').item.json.repo }}/git/ref/heads/main",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        300
+      ],
+      "id": "wf01-06",
+      "name": "Get Main SHA",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Gets the HEAD SHA of the main branch to create the feature branch from.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const sha = $input.first().json.object.sha;\nconst ctx = $('Prepare Context').first().json;\nreturn [{ json: { ref: 'refs/heads/' + ctx.branch_name, sha, ...ctx } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        300
+      ],
+      "id": "wf01-07",
+      "name": "Prepare Branch Data",
+      "notes": "Assembles the Git ref creation payload with branch name and SHA."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/git/refs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: $json.ref, sha: $json.sha }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        300
+      ],
+      "id": "wf01-08",
+      "name": "Create Branch",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Creates the typed feature branch ({prefix}/#N-slug) from main HEAD.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Prepare Branch Data').first().json;\nconst requestBody = {\n  model: 'claude-haiku-4-5-20251001',\n  max_tokens: 2048,\n  messages: [{\n    role: 'user',\n    content: 'You are a senior software architect. Analyze the following GitHub issue and provide your response in EXACTLY this format:\\n\\n'      + 'SUMMARY: [one sentence describing the implementation approach]\\n'      + '---\\n'      + '[full detailed analysis including:\\n'      + '1. Implementation approach (step-by-step)\\n'      + '2. Files likely affected\\n'      + '3. Risks and considerations\\n'      + '4. Estimated complexity (Low/Medium/High)]\\n\\n'      + 'Issue title: ' + ctx.issue_title + '\\n\\n'      + 'Issue body:\\n' + ctx.issue_body\n  }]\n};\nreturn [{ json: requestBody }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        300
+      ],
+      "id": "wf01-09",
+      "name": "Build Claude Body",
+      "notes": "Builds the Anthropic API request in JS to avoid JSON interpolation issues. Asks for SUMMARY + detailed format."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2680,
+        300
+      ],
+      "id": "wf01-10",
+      "name": "Claude Analysis",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
+      },
+      "notes": "Calls Claude Haiku for implementation analysis. Timeout 120s, retries 3x with 5s backoff.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const claudeText = $input.first().json.content[0].text;\nconst ctx = $('Prepare Branch Data').first().json;\n// Parse SUMMARY line and details\nlet summary = 'Implementation analysis complete for issue #' + ctx.issue_number + '.';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const summaryLine = parts[0].trim();\n  const match = summaryLine.match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst body = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full implementation analysis</summary>\\n\\n'\n  + details + '\\n\\n'\n  + '---\\n'\n  + '*Branch: `' + ctx.branch_name + '`*\\n\\n'\n  + '</details>';\nreturn [{ json: { body, repo: ctx.repo, issue_number: ctx.issue_number, analysis_text: claudeText, branch_name: ctx.branch_name, issue_title: ctx.issue_title, issue_body: ctx.issue_body, sha: ctx.sha } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2900,
+        300
+      ],
+      "id": "wf01-11",
+      "name": "Build Analysis Comment",
+      "notes": "Parses Claude's SUMMARY/details. Builds comment with AI header, bold summary, and collapsed details section."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3120,
+        300
+      ],
+      "id": "wf01-12",
+      "name": "Post Analysis Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts the final implementation analysis comment on the issue.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-auto-develop",
+              "leftValue": "={{ $('Build Analysis Comment').item.json.issue_body }}",
+              "rightValue": "[x] Yes, auto-develop",
+              "operator": {
+                "type": "string",
+                "operation": "contains",
+                "name": "filter.operator.contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3340,
+        300
+      ],
+      "id": "wf01-13",
+      "name": "Check Auto-Develop",
+      "notes": "Checks if the issue body contains the auto-develop checkbox. Only proceeds if checked."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Build Analysis Comment').first().json.repo }}/contents/CLAUDE.md?ref={{ encodeURIComponent($('Build Analysis Comment').first().json.branch_name) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3560,
+        300
+      ],
+      "id": "wf01-14",
+      "name": "Fetch CLAUDE.md",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches CLAUDE.md from the branch for project context. neverError: may not exist.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Build Analysis Comment').first().json.repo }}/git/trees/{{ $('Build Analysis Comment').first().json.sha }}?recursive=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3780,
+        300
+      ],
+      "id": "wf01-15",
+      "name": "Fetch File Tree",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches recursive file tree using main HEAD SHA for source file discovery.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const tree = $input.first().json.tree || [];\nconst textExts = ['.py', '.js', '.ts', '.html', '.css', '.json', '.yml', '.yaml', '.md', '.txt', '.cfg', '.ini', '.toml', '.sh'];\nconst selected = tree.filter(item => {\n  if (item.type !== 'blob') return false;\n  const path = item.path;\n  const ext = path.substring(path.lastIndexOf('.'));\n  if (!textExts.includes(ext)) return false;\n  if (path.startsWith('app/src/')) return true;\n  if (!path.includes('/') && ext) return true;\n  if (path === 'app/requirements.txt' || path === 'app/Dockerfile') return true;\n  return false;\n}).slice(0, 25);\nreturn selected.map(item => ({ json: { path: item.path, sha: item.sha } }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        300
+      ],
+      "id": "wf01-16",
+      "name": "Select Source Files",
+      "notes": "Filters tree to app/src/** + root config files, text extensions only, capped at 25 files. Outputs N items (one per file)."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Build Analysis Comment').first().json.repo }}/contents/{{ $json.path }}?ref={{ encodeURIComponent($('Build Analysis Comment').first().json.branch_name) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4220,
+        300
+      ],
+      "id": "wf01-17",
+      "name": "Fetch File Content",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches each source file content (base64) from the branch. Runs per item. neverError for missing files.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst ctx = $('Build Analysis Comment').first().json;\nconst claudeMdRaw = $('Fetch CLAUDE.md').first().json.content || '';\nlet claudeMd = '';\ntry { claudeMd = Buffer.from(claudeMdRaw.replace(/\\n/g, ''), 'base64').toString('utf8'); } catch(e) {}\nlet filesContext = '';\nlet totalLen = 0;\nconst maxLen = 80000;\nfor (const item of items) {\n  if (!item.json.content) continue;\n  let decoded;\n  try { decoded = Buffer.from(item.json.content.replace(/\\n/g, ''), 'base64').toString('utf8'); } catch(e) { continue; }\n  const entry = '\\n--- FILE: ' + item.json.path + ' ---\\n' + decoded + '\\n';\n  if (totalLen + entry.length > maxLen) break;\n  filesContext += entry;\n  totalLen += entry.length;\n}\nconst prompt = 'You are an expert software developer. Implement the following feature based on the issue description and analysis.\\n\\n'\n  + (claudeMd ? 'PROJECT CONTEXT (CLAUDE.md):\\n' + claudeMd + '\\n\\n' : '')\n  + 'ISSUE TITLE: ' + ctx.issue_title + '\\n\\n'\n  + 'ISSUE BODY:\\n' + ctx.issue_body + '\\n\\n'\n  + 'AI ANALYSIS:\\n' + ctx.analysis_text + '\\n\\n'\n  + 'CURRENT SOURCE FILES:\\n' + filesContext + '\\n\\n'\n  + 'INSTRUCTIONS:\\n'\n  + '- Implement the feature described in the issue\\n'\n  + '- Only modify or create files that are necessary\\n'\n  + '- Follow existing code conventions and patterns\\n'\n  + '- Keep changes minimal and focused\\n\\n'\n  + 'RESPONSE FORMAT (strictly follow this):\\n'\n  + 'For each file you want to create or modify, output exactly:\\n'\n  + 'FILE: path/to/file\\n'\n  + 'ACTION: create|update\\n'\n  + 'CONTENT:\\n'\n  + '<entire file content>\\n'\n  + 'FILE_END\\n\\n'\n  + 'Rules:\\n'\n  + '- FILE path must be repo-relative (e.g. app/src/main.py)\\n'\n  + '- ACTION is \"create\" for new files, \"update\" for existing\\n'\n  + '- CONTENT must be the COMPLETE file content (not a diff)\\n'\n  + '- You may output multiple FILE blocks\\n'\n  + '- Do not include any text outside of FILE blocks';\nconst requestBody = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 16384,\n  messages: [{ role: 'user', content: prompt }]\n};\nreturn [{ json: requestBody }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4440,
+        300
+      ],
+      "id": "wf01-18",
+      "name": "Build Implementation Prompt",
+      "notes": "Aggregates all fetched files into a single Claude prompt with CLAUDE.md context, issue details, analysis, and source files (truncated at 80K)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4660,
+        300
+      ],
+      "id": "wf01-19",
+      "name": "Claude Code Generation",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
+      },
+      "notes": "Calls Claude Sonnet 4.6 for code generation. 16K max tokens, 300s timeout (5min), retries 3x.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const claudeText = $input.first().json.content[0].text;\nconst blocks = [];\nconst regex = /FILE:\\s*(.+)\\nACTION:\\s*(create|update)\\nCONTENT:\\n([\\s\\S]*?)\\nFILE_END/g;\nlet match;\nwhile ((match = regex.exec(claudeText)) !== null) {\n  blocks.push({\n    path: match[1].trim(),\n    action: match[2].trim(),\n    content: match[3]\n  });\n}\nif (blocks.length === 0) throw new Error('No FILE/ACTION/CONTENT/FILE_END blocks found in Claude response');\nreturn blocks.map(b => ({ json: b }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4880,
+        300
+      ],
+      "id": "wf01-20",
+      "name": "Parse Implementation Files",
+      "notes": "Regex-parses FILE/ACTION/CONTENT/FILE_END blocks from Claude response. Outputs M items (one per file). Throws if no blocks found."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Build Analysis Comment').first().json.repo }}/contents/{{ $json.path }}?ref={{ encodeURIComponent($('Build Analysis Comment').first().json.branch_name) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5100,
+        300
+      ],
+      "id": "wf01-21",
+      "name": "Get Current File SHA",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches current SHA for each file to update. Runs per item. neverError: 404 for new files means no SHA needed.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const shaItems = $input.all();\nconst fileItems = $('Parse Implementation Files').all();\nconst ctx = $('Build Analysis Comment').first().json;\nconst results = [];\nfor (let i = 0; i < fileItems.length; i++) {\n  const file = fileItems[i].json;\n  const shaData = shaItems[i] ? shaItems[i].json : {};\n  const encoded = Buffer.from(file.content).toString('base64');\n  const payload = {\n    path: file.path,\n    action: file.action,\n    message: '[auto-develop] ' + file.action + ' ' + file.path,\n    content: encoded,\n    branch: ctx.branch_name,\n    repo: ctx.repo\n  };\n  if (shaData.sha) payload.sha = shaData.sha;\n  results.push({ json: payload });\n}\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5320,
+        300
+      ],
+      "id": "wf01-22",
+      "name": "Build Commit Payload",
+      "notes": "Pairs each parsed file with its current SHA (for updates). Base64-encodes content, sets [auto-develop] commit message."
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/contents/{{ $json.path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({ message: $json.message, content: $json.content, branch: $json.branch }, $json.sha ? { sha: $json.sha } : {})) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5540,
+        300
+      ],
+      "id": "wf01-23",
+      "name": "Commit File",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Commits each file to the branch via GitHub Contents API. Runs per item. SHA included for updates, omitted for creates.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst ctx = $('Build Analysis Comment').first().json;\nconst fileList = items.map(item => {\n  const c = item.json.content;\n  const path = (c && c.path) ? c.path : (item.json.path || 'unknown');\n  return '- `' + path + '`';\n}).join('\\n');\nconst body = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**Auto-develop: ' + items.length + ' file(s) committed to branch `' + ctx.branch_name + '`.**\\n\\n'\n  + '<details>\\n<summary>View committed files</summary>\\n\\n'\n  + fileList + '\\n\\n'\n  + '---\\n'\n  + '*CI will run automatically. If tests pass, a PR will be created by WF03.*\\n\\n'\n  + '</details>';\nreturn [{ json: { body, repo: ctx.repo, issue_number: ctx.issue_number } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5760,
+        300
+      ],
+      "id": "wf01-24",
+      "name": "Build Summary Comment",
+      "notes": "Aggregates all commit results into a summary comment listing all committed files."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5980,
+        300
+      ],
+      "id": "wf01-25",
+      "name": "Post Implementation Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts comment on the issue summarizing all auto-developed files.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Status Change?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Status Change?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Item + Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Item + Status": {
+      "main": [
+        [
+          {
+            "node": "Validate AI Ready + Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate AI Ready + Extract": {
+      "main": [
+        [
+          {
+            "node": "Prepare Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Context": {
+      "main": [
+        [
+          {
+            "node": "Post Starting Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Starting Comment": {
+      "main": [
+        [
+          {
+            "node": "Move to In Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move to In Progress": {
+      "main": [
+        [
+          {
+            "node": "Get Main SHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Main SHA": {
+      "main": [
+        [
+          {
+            "node": "Prepare Branch Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Branch Data": {
+      "main": [
+        [
+          {
+            "node": "Create Branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Branch": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Body": {
+      "main": [
+        [
+          {
+            "node": "Claude Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Analysis": {
+      "main": [
+        [
+          {
+            "node": "Build Analysis Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Analysis Comment": {
+      "main": [
+        [
+          {
+            "node": "Post Analysis Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Analysis Comment": {
+      "main": [
+        [
+          {
+            "node": "Check Auto-Develop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Auto-Develop": {
+      "main": [
+        [
+          {
+            "node": "Fetch CLAUDE.md",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch CLAUDE.md": {
+      "main": [
+        [
+          {
+            "node": "Fetch File Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch File Tree": {
+      "main": [
+        [
+          {
+            "node": "Select Source Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Source Files": {
+      "main": [
+        [
+          {
+            "node": "Fetch File Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch File Content": {
+      "main": [
+        [
+          {
+            "node": "Build Implementation Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Implementation Prompt": {
+      "main": [
+        [
+          {
+            "node": "Claude Code Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Code Generation": {
+      "main": [
+        [
+          {
+            "node": "Parse Implementation Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Implementation Files": {
+      "main": [
+        [
+          {
+            "node": "Get Current File SHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current File SHA": {
+      "main": [
+        [
+          {
+            "node": "Build Commit Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Commit Payload": {
+      "main": [
+        [
+          {
+            "node": "Commit File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit File": {
+      "main": [
+        [
+          {
+            "node": "Build Summary Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Summary Comment": {
+      "main": [
+        [
+          {
+            "node": "Post Implementation Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null
+}

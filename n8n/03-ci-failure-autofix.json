@@ -1,0 +1,1138 @@
+{
+  "name": "DevLLMOps 03 - CI Failure Auto-Fix",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "devllmops-github-ci",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "id": "wf03-01",
+      "name": "GitHub Webhook",
+      "webhookId": "devllmops-github-ci",
+      "notes": "Receives check_suite events from GitHub when CI runs complete."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-failure",
+              "leftValue": "={{ $json.body.check_suite.conclusion }}",
+              "rightValue": "failure",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        300
+      ],
+      "id": "wf03-02",
+      "name": "Is Failure?",
+      "notes": "Only proceed if the check suite concluded with failure."
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        590,
+        300
+      ],
+      "id": "wf03-02b",
+      "name": "Wait for GitHub Index",
+      "webhookId": "wf03-wait-gh-index",
+      "notes": "Wait 5 seconds for GitHub to index the workflow run status before querying the runs API."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('GitHub Webhook').item.json.body.repository.full_name }}/actions/runs?head_sha={{ $('GitHub Webhook').item.json.body.check_suite.head_sha }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "id": "wf03-03",
+      "name": "Find Workflow Runs",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Finds failed GitHub Actions runs by commit SHA (check_suite.id != run_id).",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhook = $('GitHub Webhook').first().json.body;\nconst runs = $input.first().json.workflow_runs || [];\nlet failedRun = runs.find(r => r.conclusion === 'failure');\nif (!failedRun) failedRun = runs.find(r => r.status === 'completed');\nif (!failedRun) failedRun = runs[0];\nif (!failedRun) throw new Error('No workflow run found for SHA ' + webhook.check_suite.head_sha);\nconst repo = webhook.repository.full_name;\nconst branch = webhook.check_suite.head_branch || failedRun.head_branch;\nlet prNumber = null;\nconst prs = webhook.check_suite.pull_requests || [];\nif (prs.length > 0) prNumber = prs[0].number;\nlet issueNumber = null;\nconst branchMatch = branch.match(/^[bfrodec]\\/#(\\d+)/) || branch.match(/issue-(\\d+)/);\nif (branchMatch) issueNumber = parseInt(branchMatch[1]);\nconst commentTarget = prNumber || issueNumber;\nconst headCommitMsg = (failedRun.head_commit && failedRun.head_commit.message) || '';\nconst skip_autofix = headCommitMsg.startsWith('[auto-fix]');\nreturn [{ json: { run_id: failedRun.id, run_name: failedRun.name, run_url: failedRun.html_url, repo, branch, comment_target: commentTarget, skip_autofix } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "id": "wf03-04",
+      "name": "Extract Run Info",
+      "notes": "Extracts failed run ID, determines comment target (PR number or issue number from {prefix}/#N-... branch name)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.comment_target }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Investigating CI failure on branch `' + $json.branch + '`.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **Workflow run:** ' + $json.run_name + '\\n- **Branch:** `' + $json.branch + '`\\n- **Run URL:** ' + $json.run_url + '\\n\\nRetrieving failure logs and running AI diagnosis...\\n\\n</details>' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        300
+      ],
+      "id": "wf03-05",
+      "name": "Post Starting Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts initial comment acknowledging the CI failure investigation has started.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract Run Info').item.json.repo }}/actions/runs/{{ $('Extract Run Info').item.json.run_id }}/jobs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        300
+      ],
+      "id": "wf03-06",
+      "name": "Get Failed Jobs",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Retrieves all jobs for the failed workflow run.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = $input.first().json.jobs || [];\nconst failedJob = jobs.find(j => j.conclusion === 'failure');\nif (!failedJob) throw new Error('No failed job found in run ' + $('Extract Run Info').first().json.run_id);\nconst ctx = $('Extract Run Info').first().json;\n// Build step summary for Claude\nconst stepSummary = failedJob.steps.map(s => `  ${s.conclusion === 'failure' ? '\u274c' : '\u2705'} ${s.name}: ${s.conclusion}`).join('\\n');\nreturn [{ json: { job_id: failedJob.id, job_name: failedJob.name, step_summary: stepSummary, ...ctx } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        300
+      ],
+      "id": "wf03-07",
+      "name": "Extract Failed Job",
+      "notes": "Finds the first failed job, builds a step-by-step summary with pass/fail indicators."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/actions/jobs/{{ $json.job_id }}/logs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false,
+              "maxRedirects": 0
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        300
+      ],
+      "id": "wf03-08",
+      "name": "Get Log Redirect URL",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Requests the log download URL without following the 302 redirect. GitHub returns a signed URL that rejects auth headers if forwarded.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst headers = response.headers || {};\nconst location = headers.location || headers.Location || '';\nconst ctx = $('Extract Failed Job').first().json;\nif (!location) {\n  // Fallback: provide step summary only\n  return [{ json: { logs: 'Raw logs unavailable. Step summary:\\n' + ctx.step_summary, has_logs: false, ...ctx } }];\n}\nreturn [{ json: { log_url: location, has_logs: true, ...ctx } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        300
+      ],
+      "id": "wf03-09",
+      "name": "Extract Log URL",
+      "notes": "Extracts the Location header (signed log download URL) from the 302 response. Falls back to step summary if unavailable."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.log_url || 'https://example.com/skip' }}",
+        "authentication": "none",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        300
+      ],
+      "id": "wf03-10",
+      "name": "Download Logs",
+      "notes": "Downloads the actual logs from the signed URL WITHOUT auth headers. Timeout 60s for large logs.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Extract Log URL').first().json;\nlet logs;\nif (ctx.has_logs) {\n  const rawLogs = $input.first().json.data || $input.first().json || '';\n  logs = typeof rawLogs === 'string' ? rawLogs.substring(0, 30000) : JSON.stringify(rawLogs).substring(0, 30000);\n} else {\n  logs = ctx.logs;\n}\nconst requestBody = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 4096,\n  messages: [{\n    role: 'user',\n    content: 'You are a CI/CD debugging expert. A GitHub Actions job failed.\\n\\n'      + 'Provide your response in EXACTLY this format:\\n'      + 'SUMMARY: [one sentence describing the root cause and fix]\\n'      + '---\\n'      + '[full detailed analysis including:\\n'      + '1. Root cause of the failure\\n'      + '2. The specific file(s) and line(s) to fix\\n'      + '3. The exact code change needed (as a diff)\\n'      + '4. Any additional context]\\n\\n'      + 'If the fix is a single-file text replacement, also append EXACTLY this block after your analysis:\\n'      + 'AUTO_FIX_FILE: path/to/file\\n'      + 'AUTO_FIX_OLD:\\n'      + '<exact lines to replace, copied verbatim from the file>\\n'      + 'AUTO_FIX_END\\n'      + 'AUTO_FIX_NEW:\\n'      + '<exact replacement lines>\\n'      + 'AUTO_FIX_END\\n\\n'      + 'Rules for the AUTO_FIX block:\\n'      + '- Only include it if you are confident in a single-file fix\\n'      + '- AUTO_FIX_FILE must be a repo-relative path (e.g. app/src/main.py)\\n'      + '- AUTO_FIX_OLD must match the file content exactly (whitespace matters)\\n'      + '- If the fix spans multiple files or you are unsure, omit the AUTO_FIX block entirely\\n\\n'      + 'Failed job: ' + ctx.job_name + '\\n'      + 'Branch: ' + ctx.branch + '\\n'      + 'Step summary:\\n' + ctx.step_summary + '\\n\\n'      + 'Logs (truncated to 30K chars):\\n' + logs\n  }]\n};\nreturn [{ json: requestBody }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        300
+      ],
+      "id": "wf03-11",
+      "name": "Build Claude Body",
+      "notes": "Builds the Anthropic API request safely in JS. Includes step summary and logs (truncated to 30K). Asks for SUMMARY + detailed format."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2680,
+        300
+      ],
+      "id": "wf03-12",
+      "name": "Claude Diagnosis",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
+      },
+      "notes": "Calls Claude Sonnet for CI failure diagnosis. Timeout 120s, retries 3x with 5s backoff.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const claudeText = $input.first().json.content[0].text;\nconst ctx = $('Extract Log URL').first().json;\nconst runInfo = $('Extract Run Info').first().json;\nlet summary = 'CI failure diagnosed on `' + ctx.job_name + '`.';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const match = parts[0].trim().match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst body = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full CI failure analysis</summary>\\n\\n'\n  + details + '\\n\\n'\n  + '---\\n'\n  + '*Failed job: `' + ctx.job_name + '` | Branch: `' + ctx.branch + '` | [View run](' + ctx.run_url + ')*\\n\\n'\n  + '</details>';\nreturn [{ json: { body, claude_text: claudeText, summary, repo: ctx.repo, branch: ctx.branch, comment_target: ctx.comment_target, skip_autofix: runInfo.skip_autofix } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2900,
+        300
+      ],
+      "id": "wf03-13",
+      "name": "Build Analysis Comment",
+      "notes": "Parses Claude's SUMMARY/details format. Builds comment with AI header, bold summary, and collapsed full analysis."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.comment_target }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3120,
+        300
+      ],
+      "id": "wf03-14",
+      "name": "Post Analysis Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts the final CI failure analysis comment on the PR or linked issue.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Build Analysis Comment').first().json;\nconst text = prev.claude_text || '';\nlet has_fix = false;\nlet fix_file = '';\nlet fix_old = '';\nlet fix_new = '';\nconst fileMatch = text.match(/AUTO_FIX_FILE:\\s*(.+)/);\nconst oldMatch = text.match(/AUTO_FIX_OLD:\\n([\\s\\S]*?)\\nAUTO_FIX_END/);\nconst newMatch = text.match(/AUTO_FIX_NEW:\\n([\\s\\S]*?)\\nAUTO_FIX_END/);\nif (fileMatch && oldMatch && newMatch) {\n  fix_file = fileMatch[1].trim();\n  fix_old = oldMatch[1];\n  fix_new = newMatch[1];\n  has_fix = true;\n}\nreturn [{ json: { has_fix, fix_file, fix_old, fix_new, summary: prev.summary, repo: prev.repo, branch: prev.branch, comment_target: prev.comment_target, skip_autofix: prev.skip_autofix } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3340,
+        300
+      ],
+      "id": "wf03-15",
+      "name": "Parse Auto-Fix",
+      "notes": "Extracts AUTO_FIX_FILE, AUTO_FIX_OLD, AUTO_FIX_NEW markers from Claude response. Sets has_fix flag."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-has-fix",
+              "leftValue": "={{ $json.has_fix }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true"
+              }
+            },
+            {
+              "id": "cond-no-skip",
+              "leftValue": "={{ $json.skip_autofix }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "name": "filter.operator.false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3560,
+        300
+      ],
+      "id": "wf03-16",
+      "name": "Has Fix?",
+      "notes": "Proceeds only if Claude provided an auto-fix AND this is not already an auto-fix commit (loop prevention)."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/contents/{{ $json.fix_file }}?ref={{ encodeURIComponent($json.branch) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3780,
+        300
+      ],
+      "id": "wf03-17",
+      "name": "Get File Content",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches the target file from GitHub (base64 content + SHA needed for the commit).",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Parse Auto-Fix').first().json;\nconst fileData = $input.first().json;\nconst content = Buffer.from(fileData.content.replace(/\\n/g, ''), 'base64').toString('utf8');\nconst fixed = content.replace(prev.fix_old, prev.fix_new);\nif (fixed === content) throw new Error('AUTO_FIX_OLD not found in file ' + prev.fix_file + '. The exact string match failed.');\nconst encodedContent = Buffer.from(fixed).toString('base64');\nconst commitMsg = '[auto-fix] ' + prev.summary;\nreturn [{ json: { message: commitMsg, content: encodedContent, sha: fileData.sha, branch: prev.branch, path: prev.fix_file, repo: prev.repo, comment_target: prev.comment_target, summary: prev.summary } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        300
+      ],
+      "id": "wf03-18",
+      "name": "Apply Fix + Commit Body",
+      "notes": "Base64-decodes the file, applies the string replacement, re-encodes, and builds the PUT body with [auto-fix] commit message."
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/contents/{{ $json.path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: $json.message, content: $json.content, sha: $json.sha, branch: $json.branch }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4220,
+        300
+      ],
+      "id": "wf03-19",
+      "name": "Commit Fix",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Commits the fixed file to the branch via GitHub Contents API.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Apply Fix + Commit Body').item.json.repo }}/issues/{{ $('Apply Fix + Commit Body').item.json.comment_target }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Auto-fix committed to branch `' + $('Apply Fix + Commit Body').item.json.branch + '`:** `' + $('Apply Fix + Commit Body').item.json.message + '`\\n\\n<details>\\n<summary>View fix details</summary>\\n\\n- **File:** `' + $('Apply Fix + Commit Body').item.json.path + '`\\n- **Branch:** `' + $('Apply Fix + Commit Body').item.json.branch + '`\\n- **Commit message:** `' + $('Apply Fix + Commit Body').item.json.message + '`\\n\\nCI will re-run automatically. If this fix is incorrect, revert the commit and apply the fix manually.\\n\\n</details>' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4440,
+        300
+      ],
+      "id": "wf03-20",
+      "name": "Post Fix Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts a comment confirming the auto-fix commit with file and branch details.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhook = $('GitHub Webhook').first().json.body;\nconst conclusion = webhook.check_suite.conclusion;\nconst branch = webhook.check_suite.head_branch || '';\nconst repo = webhook.repository.full_name;\nconst owner = webhook.repository.owner.login;\nconst protectedBranches = ['main', 'master', 'release', 'develop'];\nconst should_create_pr = conclusion === 'success' && !protectedBranches.includes(branch);\nlet issueNumber = null;\nconst branchMatch = branch.match(/^[bfrodec]\\/#(\\d+)/) || branch.match(/issue-(\\d+)/);\nif (branchMatch) issueNumber = parseInt(branchMatch[1]);\nreturn [{ json: { repo, owner, branch, issue_number: issueNumber, should_create_pr } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        520
+      ],
+      "id": "wf03-21",
+      "name": "Extract Branch Info",
+      "notes": "Validates conclusion=success, checks branch is not protected (main/release), extracts repo/owner/branch/issue_number."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-should-create-pr",
+              "leftValue": "={{ $json.should_create_pr }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        520
+      ],
+      "id": "wf03-22",
+      "name": "Should Create PR?",
+      "notes": "Proceeds only if the branch is eligible for auto-PR creation."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/pulls?head={{ $json.owner }}:{{ encodeURIComponent($json.branch) }}&state=open",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        520
+      ],
+      "id": "wf03-23",
+      "name": "Check Existing PR",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Checks if an open PR already exists for this branch to avoid duplicates.",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Extract Branch Info').first().json;\nconst items = $input.all();\nconst has_existing_pr = items.some(item => item.json && item.json.number !== undefined);\nconst prefixMap = { b: 'Bug Fix', f: 'Feature', r: 'Refactor', o: 'Ops', d: 'Docs', e: 'Enhancement' };\nconst branch = prev.branch;\nconst branchMatch = branch.match(/^([bfrodec])\\/#(\\d+)-(.+)/);\nlet title, body;\nif (branchMatch) {\n  const prefix = prefixMap[branchMatch[1]] || 'Update';\n  const num = branchMatch[2];\n  const slug = branchMatch[3].replace(/-/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());\n  title = prefix + ': ' + slug + ' (#' + num + ')';\n  body = '> \\uD83E\\uDD16 **This is an automated PR created by the DevLLMOps AI Agent**\\n\\n'\n    + 'CI passed on branch `' + branch + '`. This PR was auto-created for review.\\n\\n'\n    + 'Closes #' + num;\n} else {\n  const slug = branch.replace(/[-_\\/]/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());\n  title = slug;\n  body = '> \\uD83E\\uDD16 **This is an automated PR created by the DevLLMOps AI Agent**\\n\\n'\n    + 'CI passed on branch `' + branch + '`. This PR was auto-created for review.';\n}\nreturn [{ json: { has_existing_pr, title, body, ...prev } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        520
+      ],
+      "id": "wf03-24",
+      "name": "Build PR Body",
+      "notes": "Checks for existing PRs. Humanizes branch slug into title (e.g. f/#5-add-dark-mode -> Feature: Add Dark Mode (#5)), builds body with AI header + Closes #N."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-no-existing-pr",
+              "leftValue": "={{ $json.has_existing_pr }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "name": "filter.operator.false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1580,
+        520
+      ],
+      "id": "wf03-25",
+      "name": "No PR Yet?",
+      "notes": "Proceeds only if no open PR exists for this branch (prevents duplicates)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/pulls",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ title: $json.title, body: $json.body, head: $json.branch, base: 'main' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        520
+      ],
+      "id": "wf03-26",
+      "name": "Create PR",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Creates a pull request targeting main. This triggers WF02 (AI Review) via pull_request.opened webhook.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Extract Branch Info').item.json.repo }}/issues/{{ $('Extract Branch Info').item.json.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Pull request auto-created for branch `' + $('Extract Branch Info').item.json.branch + '`.**\\n\\n' + $json.html_url + '\\n\\nThis PR will now be reviewed by the AI Review workflow (WF02).' }) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        520
+      ],
+      "id": "wf03-27",
+      "name": "Post PR Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts comment on linked issue confirming PR creation. Uses neverError for branches without issue numbers."
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Failure?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Failure?": {
+      "main": [
+        [
+          {
+            "node": "Wait for GitHub Index",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Branch Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for GitHub Index": {
+      "main": [
+        [
+          {
+            "node": "Find Workflow Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Workflow Runs": {
+      "main": [
+        [
+          {
+            "node": "Extract Run Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Run Info": {
+      "main": [
+        [
+          {
+            "node": "Post Starting Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Starting Comment": {
+      "main": [
+        [
+          {
+            "node": "Get Failed Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Failed Jobs": {
+      "main": [
+        [
+          {
+            "node": "Extract Failed Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Failed Job": {
+      "main": [
+        [
+          {
+            "node": "Get Log Redirect URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Log Redirect URL": {
+      "main": [
+        [
+          {
+            "node": "Extract Log URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Log URL": {
+      "main": [
+        [
+          {
+            "node": "Download Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Logs": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Body": {
+      "main": [
+        [
+          {
+            "node": "Claude Diagnosis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Diagnosis": {
+      "main": [
+        [
+          {
+            "node": "Build Analysis Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Analysis Comment": {
+      "main": [
+        [
+          {
+            "node": "Post Analysis Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Analysis Comment": {
+      "main": [
+        [
+          {
+            "node": "Parse Auto-Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Auto-Fix": {
+      "main": [
+        [
+          {
+            "node": "Has Fix?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Fix?": {
+      "main": [
+        [
+          {
+            "node": "Get File Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File Content": {
+      "main": [
+        [
+          {
+            "node": "Apply Fix + Commit Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Fix + Commit Body": {
+      "main": [
+        [
+          {
+            "node": "Commit Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Fix": {
+      "main": [
+        [
+          {
+            "node": "Post Fix Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Branch Info": {
+      "main": [
+        [
+          {
+            "node": "Should Create PR?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Create PR?": {
+      "main": [
+        [
+          {
+            "node": "Check Existing PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing PR": {
+      "main": [
+        [
+          {
+            "node": "Build PR Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build PR Body": {
+      "main": [
+        [
+          {
+            "node": "No PR Yet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No PR Yet?": {
+      "main": [
+        [
+          {
+            "node": "Create PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create PR": {
+      "main": [
+        [
+          {
+            "node": "Post PR Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null
+}

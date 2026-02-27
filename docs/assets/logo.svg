@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 40 450 155" width="450" height="155">
+  <defs>
+    <linearGradient id="loopGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6C5CE7"/>
+      <stop offset="50%" stop-color="#0984E3"/>
+      <stop offset="100%" stop-color="#00B894"/>
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6C5CE7"/>
+      <stop offset="100%" stop-color="#0984E3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Infinity loop / DevOps cycle symbol -->
+  <g transform="translate(90, 100)">
+    <!-- Infinity loop path -->
+    <path d="M-48,0 C-48,-30 -20,-38 0,-20 C20,-38 48,-30 48,0 C48,30 20,38 0,20 C-20,38 -48,30 -48,0 Z"
+          fill="none" stroke="url(#loopGrad)" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- Dots on the loop path -->
+    <circle cx="-38" cy="-22" r="6" fill="#6C5CE7"/>
+    <circle cx="0" cy="0" r="7" fill="#0984E3"/>
+    <circle cx="38" cy="22" r="6" fill="#00B894"/>
+  </g>
+
+  <!-- Wordmark -->
+  <g transform="translate(160, 100)">
+    <text y="12" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="52" letter-spacing="-1">
+      <tspan font-weight="300" fill="#2D3436">Dev</tspan><tspan font-weight="700" fill="url(#textGrad)">LLM</tspan><tspan font-weight="300" fill="#2D3436">Ops</tspan>
+    </text>
+  </g>
+
+  <!-- Tagline -->
+  <text x="235" y="175" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="13" fill="#636E72" text-anchor="middle" letter-spacing="3">AI-NATIVE SOFTWARE DEVELOPMENT</text>
+</svg>

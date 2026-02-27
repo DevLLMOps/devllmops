@@ -1,0 +1,213 @@
+{
+  "name": "DevLLMOps 04 - Production Alert Investigation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "devllmops-production-alert",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "id": "wf04-01",
+      "name": "Alert Webhook",
+      "webhookId": "devllmops-production-alert",
+      "notes": "Receives production alerts from monitoring tools (Prometheus, Grafana, Datadog, UptimeKuma)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst alertName = body.commonLabels?.alertname || body.title || body.alert_name || 'Unknown Alert';\nconst severity = body.commonLabels?.severity || body.severity || 'warning';\nconst description = body.commonAnnotations?.description || body.message || body.body || JSON.stringify(body);\nconst service = body.commonLabels?.service || body.service || body.monitor || 'unknown';\nreturn [{ json: { alert_name: alertName, severity, description, service } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ],
+      "id": "wf04-02",
+      "name": "Normalize Alert",
+      "notes": "Normalizes alert payload from various monitoring tools into a standard format (alert_name, severity, description, service)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $input.first().json;\nconst requestBody = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 4096,\n  messages: [{\n    role: 'user',\n    content: 'You are an SRE investigating a production alert.\\n\\n'      + 'Provide your response in EXACTLY this format:\\n'      + 'SUMMARY: [one sentence describing the likely root cause and recommended action]\\n'      + '---\\n'      + '[full detailed investigation including:\\n'      + '1. Likely root cause\\n'      + '2. Impact assessment (users affected, severity)\\n'      + '3. Immediate mitigation steps\\n'      + '4. Recommended follow-up actions]\\n\\n'      + 'Alert name: ' + ctx.alert_name + '\\n'      + 'Severity: ' + ctx.severity + '\\n'      + 'Service: ' + ctx.service + '\\n'      + 'Description: ' + ctx.description\n  }]\n};\nreturn [{ json: requestBody }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ],
+      "id": "wf04-03",
+      "name": "Build Claude Body",
+      "notes": "Builds the Anthropic API request body safely in JS. Asks for SUMMARY + detailed investigation format."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        300
+      ],
+      "id": "wf04-04",
+      "name": "Claude Investigation",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
+      },
+      "notes": "Calls Claude Sonnet for alert investigation. Timeout 120s, retries 3x with 5s backoff.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const alert = $('Normalize Alert').first().json;\nconst claudeText = $input.first().json.content[0].text;\n// Parse SUMMARY and details\nlet summary = 'Production alert: ' + alert.alert_name + ' on ' + alert.service + '.';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const match = parts[0].trim().match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst issueBody = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full investigation</summary>\\n\\n'\n  + '## Alert Details\\n\\n'\n  + '| Field | Value |\\n|---|---|\\n'\n  + '| **Alert** | ' + alert.alert_name + ' |\\n'\n  + '| **Severity** | ' + alert.severity + ' |\\n'\n  + '| **Service** | ' + alert.service + ' |\\n\\n'\n  + '## Agent Investigation\\n\\n'\n  + details + '\\n\\n'\n  + '</details>';\nreturn [{ json: {\n  title: '[ALERT] ' + alert.alert_name,\n  body: issueBody,\n  labels: ['incident', 'intent']\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        300
+      ],
+      "id": "wf04-05",
+      "name": "Build Issue Body",
+      "notes": "Formats the investigation with AI header, bold summary sentence, and collapsed full details. Labels issue as incident + intent."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/OWNER/REPO/issues",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        300
+      ],
+      "id": "wf04-06",
+      "name": "Create GitHub Issue",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Creates a GitHub issue with the alert investigation. Labels: incident, intent.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Alert Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Alert": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Body": {
+      "main": [
+        [
+          {
+            "node": "Claude Investigation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Investigation": {
+      "main": [
+        [
+          {
+            "node": "Build Issue Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Issue Body": {
+      "main": [
+        [
+          {
+            "node": "Create GitHub Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null
+}

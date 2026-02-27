@@ -1,0 +1,350 @@
+{
+  "name": "DevLLMOps 05 - Daily Cost Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ],
+      "id": "wf05-01",
+      "name": "Daily 09:00 UTC",
+      "notes": "Runs daily at 09:00 UTC to generate the cost report."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{ $json.hostname || 'N8N_HOST' }}/api/v1/workflows",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "id": "wf05-02",
+      "name": "Fetch Workflows",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "n8n Internal API"
+        }
+      },
+      "notes": "Fetches all workflows from the n8n API to build an ID-to-name map for cost attribution.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://N8N_HOST/api/v1/executions?limit=250&status=success",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "id": "wf05-03",
+      "name": "Fetch Executions",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "n8n Internal API"
+        }
+      },
+      "notes": "Fetches up to 250 recent successful executions. The Code node filters to the last 24h.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Pricing per million tokens (update when models change) ---\nconst PRICING = {\n  haiku:  { input: 1.00, output: 5.00 },\n  sonnet: { input: 3.00, output: 15.00 }\n};\n\n// --- Map workflow names to models ---\nconst workflows = ($('Fetch Workflows').first().json.data || []);\nconst wfMap = {};\nfor (const wf of workflows) {\n  // Detect model from workflow name\n  const name = wf.name || '';\n  let model = 'haiku'; // default\n  if (name.includes('03') || name.includes('04') || name.includes('CI Failure') || name.includes('Production Alert')) {\n    model = 'sonnet';\n  }\n  // Average tokens per invocation (conservative estimates)\n  wfMap[wf.id] = { name, model, avg_input: 5000, avg_output: 2500 };\n}\n\n// --- Filter executions to last 24h ---\nconst now = new Date();\nconst oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);\nconst executions = ($input.first().json.data || []);\nconst recent = executions.filter(e => new Date(e.startedAt) >= oneDayAgo);\n\n// --- Count per workflow and estimate tokens ---\nlet totalInput = 0, totalOutput = 0;\nconst breakdown = {};\nfor (const ex of recent) {\n  // Skip WF05 itself (cost report doesn't call Claude)\n  const wf = wfMap[ex.workflowId];\n  if (!wf) continue;\n  if (wf.name.includes('05') || wf.name.includes('Cost Report')) continue;\n  totalInput += wf.avg_input;\n  totalOutput += wf.avg_output;\n  breakdown[wf.name] = (breakdown[wf.name] || 0) + 1;\n}\n\n// --- Compute cost ---\n// Weighted average pricing (rough: assume 50/50 haiku/sonnet split,\n// but actually compute per-execution based on model)\nlet dailyCost = 0;\nfor (const ex of recent) {\n  const wf = wfMap[ex.workflowId];\n  if (!wf) continue;\n  if (wf.name.includes('05') || wf.name.includes('Cost Report')) continue;\n  const p = PRICING[wf.model] || PRICING.haiku;\n  dailyCost += (wf.avg_input / 1e6) * p.input + (wf.avg_output / 1e6) * p.output;\n}\n\n// --- Rolling 7-day average from staticData ---\nconst staticData = $getWorkflowStaticData('global');\nconst history = staticData.dailyCosts || [];\nhistory.push({ date: now.toISOString().slice(0, 10), cost: dailyCost });\n// Keep last 7 entries\nwhile (history.length > 7) history.shift();\nstaticData.dailyCosts = history;\n\nconst rollingSum = history.reduce((s, d) => s + d.cost, 0);\nconst rollingAvg = history.length > 0 ? rollingSum / history.length : 0;\nconst monthToDate = history.reduce((s, d) => {\n  return d.date.slice(0, 7) === now.toISOString().slice(0, 7) ? s + d.cost : s;\n}, 0);\n\n// --- Build breakdown text ---\nlet breakdownText = '';\nfor (const [name, count] of Object.entries(breakdown)) {\n  breakdownText += `- ${name}: ${count} execution(s)\\n`;\n}\nif (!breakdownText) breakdownText = '- No AI workflow executions in the last 24h\\n';\n\nconst isOverThreshold = dailyCost > 1.5 * rollingAvg && rollingAvg > 0 && history.length >= 2;\n\nreturn [{ json: {\n  daily_cost: dailyCost.toFixed(2),\n  rolling_average_7d: rollingAvg.toFixed(2),\n  month_to_date: monthToDate.toFixed(2),\n  input_tokens: totalInput,\n  output_tokens: totalOutput,\n  execution_count: recent.length,\n  breakdown: breakdownText,\n  is_over_threshold: isOverThreshold\n} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "id": "wf05-04",
+      "name": "Calculate Costs",
+      "notes": "Filters executions to last 24h, maps workflows to AI models (Haiku/Sonnet), estimates token costs. Stores daily costs in staticData for 7-day rolling average."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-threshold",
+              "leftValue": "={{ $json.is_over_threshold }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1140,
+        300
+      ],
+      "id": "wf05-05",
+      "name": "Over 150% Average?",
+      "notes": "Checks if today's cost exceeds 150% of the 7-day rolling average. Requires at least 2 days of history."
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Calculate Costs').first().json;\nreturn [{ json: {\n  title: '[COST ALERT] Daily AI spend ($' + d.daily_cost + ') exceeds 150% of 7-day average',\n  body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n    + '**Daily AI spend ($' + d.daily_cost + ') exceeds 150% of the 7-day rolling average ($' + d.rolling_average_7d + ').**\\n\\n'\n    + '<details>\\n<summary>View cost breakdown</summary>\\n\\n'\n    + '| Metric | Value |\\n|---|---|\\n'\n    + '| **Daily spend** | $' + d.daily_cost + ' |\\n'\n    + '| **7-day average** | $' + d.rolling_average_7d + ' |\\n'\n    + '| **Month-to-date** | $' + d.month_to_date + ' |\\n'\n    + '| **Input tokens** | ' + d.input_tokens + ' |\\n'\n    + '| **Output tokens** | ' + d.output_tokens + ' |\\n'\n    + '| **Executions** | ' + d.execution_count + ' |\\n\\n'\n    + '### Breakdown\\n\\n' + d.breakdown + '\\n'\n    + '### Recommended actions\\n\\n'\n    + '- Review prompt efficiency\\n'\n    + '- Check for runaway automation loops\\n'\n    + '- Consider using Haiku for routine tasks\\n\\n'\n    + '</details>',\n  labels: ['cost-alert']\n} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        200
+      ],
+      "id": "wf05-06",
+      "name": "Build Cost Alert Body",
+      "notes": "Formats the cost alert issue with AI header, summary, and collapsible breakdown."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/OWNER/REPO/issues",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        200
+      ],
+      "id": "wf05-07",
+      "name": "Create Cost Alert Issue",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Creates a GitHub issue flagging the cost overrun.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Calculate Costs').first().json;\nreturn [{ json: {\n  title: '[Daily Report] AI Usage \u2014 $' + d.daily_cost,\n  body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n    + '**AI usage yesterday: $' + d.daily_cost + ' | 7-day avg: $' + d.rolling_average_7d + ' | MTD: $' + d.month_to_date + '**\\n\\n'\n    + '<details>\\n<summary>View full daily report</summary>\\n\\n'\n    + '| Metric | Value |\\n|---|---|\\n'\n    + '| **Daily spend** | $' + d.daily_cost + ' |\\n'\n    + '| **7-day average** | $' + d.rolling_average_7d + ' |\\n'\n    + '| **Month-to-date** | $' + d.month_to_date + ' |\\n'\n    + '| **Input tokens** | ' + d.input_tokens + ' |\\n'\n    + '| **Output tokens** | ' + d.output_tokens + ' |\\n'\n    + '| **Executions** | ' + d.execution_count + ' |\\n\\n'\n    + '### Breakdown\\n\\n' + d.breakdown + '\\n'\n    + '</details>',\n  labels: ['daily-report']\n} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        400
+      ],
+      "id": "wf05-08",
+      "name": "Build Daily Summary Body",
+      "notes": "Formats the daily summary issue with AI header, one-line summary, and collapsible details."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/OWNER/REPO/issues",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        400
+      ],
+      "id": "wf05-09",
+      "name": "Create Daily Summary Issue",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Creates the daily AI usage summary issue on GitHub.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Daily 09:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Fetch Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Workflows": {
+      "main": [
+        [
+          {
+            "node": "Fetch Executions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Executions": {
+      "main": [
+        [
+          {
+            "node": "Calculate Costs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Costs": {
+      "main": [
+        [
+          {
+            "node": "Over 150% Average?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Over 150% Average?": {
+      "main": [
+        [
+          {
+            "node": "Build Cost Alert Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Daily Summary Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Cost Alert Body": {
+      "main": [
+        [
+          {
+            "node": "Create Cost Alert Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Cost Alert Issue": {
+      "main": [
+        [
+          {
+            "node": "Build Daily Summary Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Daily Summary Body": {
+      "main": [
+        [
+          {
+            "node": "Create Daily Summary Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Daily 09:00 UTC": {
+      "recurrenceRules": []
+    }
+  }
+}

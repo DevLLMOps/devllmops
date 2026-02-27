@@ -71,6 +71,10 @@ make prod        # Start production environment
 make down        # Stop all services
 ```
 
+## Reviews
+
+Find review instructions at [REVIEW.md](./REVIEW.md)
+
 ## Known Issues / Gotchas
 
 <!-- Things that trip up agents or humans -->

@@ -58,7 +58,7 @@ See [Tooling Setup](docs/tooling.md) for full installation and configuration.
 ### 2. Configure Your GitHub Repository
 
 1. Enable branch protection on `main` and `release` (require status checks, no force-push)
-2. Set up GitHub Projects board: `Intent` > `In Progress` > `Verification` > `Human Review` > `Shipped` > `Released`
+2. Set up GitHub Projects board: `Backlog` > `Ready` > `AI Ready` > `In Progress` > `Verification` > `Human Review` > `Done`
 3. Add secrets: `ANTHROPIC_API_KEY`, and optionally `KUBE_CONFIG`, `SCW_ACCESS_KEY`/`SCW_SECRET_KEY`
 4. Copy the provided [GitHub Actions workflows](docs/github-setup.md#github-actions-workflows) and [issue template](docs/github-setup.md#issue-template)
 

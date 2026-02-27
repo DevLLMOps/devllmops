@@ -54,7 +54,7 @@ Or use GitHub's built-in Dependabot for automatic dependency update PRs.
 
 ### 4. AI Adversarial Security Review
 
-A second AI agent reviews diffs specifically for security (see [AI Review workflow](github-setup.md#ai-review-workflow)):
+A second AI agent reviews diffs specifically for security (see [AI Review via n8n](github-setup.md#ai-review-via-n8n) and [n8n Workflow 2](n8n-setup.md#workflow-2-pr-opened--ai-review--routing)):
 
 ```text
 Review this diff for OWASP Top 10 vulnerabilities.

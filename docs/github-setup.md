@@ -25,13 +25,17 @@ Configure for trunk-based development (per OCPA):
 gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
   --input - <<'EOF'
 {
-  "required_status_checks": {"strict": true, "contexts": ["ci", "test", "security"]},
+  "required_status_checks": {"strict": true, "contexts": ["ci", "test", "security", "ai-review"]},
   "required_pull_request_reviews": {"required_approving_review_count": 1},
   "enforce_admins": true,
   "restrictions": null
 }
 EOF
 ```
+
+## Auto-Merge
+
+Go to **Settings > General > Pull Requests** and check **Allow auto-merge**. This lets PRs merge automatically once all required status checks pass, which is essential for the fully automated DevLLMOps pipeline (WF01 auto-develop → CI → WF03 auto-PR → auto-merge → WF02 review).
 
 ## Repository Secrets
 
@@ -93,55 +97,51 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ github.ref_name == 'release' && 'latest' || 'develop' }}
 ```
 
-### AI Review Workflow
+### AI Review (via n8n)
 
-Save as `.github/workflows/ai-review.yml`. This runs an adversarial AI review on every PR:
+AI adversarial review on PRs is handled by **n8n Workflow 02** (PR AI Review + Routing) rather than a GitHub Actions workflow. This approach centralizes all AI agent logic in n8n, avoids duplicating Claude API calls, and enables routing decisions (auto-approve vs. request human review) based on security-critical paths.
+
+When the AI review passes (no security-critical paths touched), WF02 adds the **`ai-review-passed`** label to the PR. This label is the primary signal that the AI review succeeded — the subsequent `POST /reviews` approval step may fail with HTTP 422 when the same GitHub account that opened the PR attempts to approve it (GitHub does not allow self-approval). The label provides a reliable, machine-readable signal regardless.
+
+Create the label on each repository that uses WF02:
+
+```bash
+gh label create ai-review-passed --repo OWNER/REPO \
+  --color 0E8A16 --description "AI code review passed (WF02)"
+```
+
+To enforce AI review as a merge requirement, add a GitHub Actions workflow that checks for the label (see below) and include it as a required status check in branch protection.
+
+See [n8n setup — Workflow 2](n8n-setup.md#workflow-2-pr-opened--ai-review--routing) for the full workflow details.
+
+### AI Review Status Check
+
+Save as `.github/workflows/ai-review-check.yml` to turn the `ai-review-passed` label into a required status check:
 
 ```yaml
-name: AI Review
+name: AI Review Check
 
 on:
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, labeled, unlabeled]
 
 jobs:
   ai-review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Get diff
-        run: git diff origin/main...HEAD > /tmp/diff.patch
-
-      - name: AI Adversarial Review
-        run: |
-          curl -s https://api.anthropic.com/v1/messages \
-            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d "$(jq -n \
-              --arg diff "$(cat /tmp/diff.patch | head -c 50000)" \
-              '{
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 2048,
-                "messages": [{
-                  "role": "user",
-                  "content": ("Review this diff for:\n1. Bugs and logic errors\n2. Security vulnerabilities (OWASP Top 10)\n3. Missing error handling\n4. Missing tests\n\nOnly flag real issues. Be concise.\n\nDiff:\n" + $diff)
-                }]
-              }')" | jq -r '.content[0].text' > /tmp/review.txt
-
-      - name: Post review comment
-        if: always()
-        run: |
-          gh pr comment ${{ github.event.pull_request.number }} \
-            --body "## AI Review\n\n$(cat /tmp/review.txt)"
+      - name: Check ai-review-passed label
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          if echo "$LABELS" | grep -q 'ai-review-passed'; then
+            echo "AI review passed."
+          else
+            echo "Waiting for AI review (ai-review-passed label not found)."
+            exit 1
+          fi
 ```
 
-> **Note:** This uses Claude Haiku for cost efficiency. For deeper review, switch to `claude-sonnet-4-6` or `claude-opus-4-6`. Adjust `head -c 50000` for larger diffs (increases cost).
+Then add `ai-review` as a required status check in branch protection (see above).
 
 ### PR Direction Enforcement
 
@@ -164,6 +164,12 @@ jobs:
           echo "Cannot merge release into main. Only main > release is allowed."
           exit 1
 ```
+
+## REVIEW.md — AI Review Configuration
+
+Place a `REVIEW.md` file at the root of your repository to customize the AI code reviewer (WF02). It controls what the reviewer checks for, severity levels, auto-approve criteria, and project-specific rules. If absent, the reviewer falls back to a default checklist (bugs, OWASP Top 10, error handling, performance).
+
+A template is available at [`templates/REVIEW.md`](../templates/REVIEW.md) — copy it to your repo and customize it for your project.
 
 ## Issue Template
 
@@ -220,15 +226,41 @@ body:
 
 ## GitHub Projects Board
 
-Create a project board with these columns and automations:
+Create a project board with these columns:
 
-| Column           | Auto-Trigger                      |
-| ---------------- | --------------------------------- |
-| **Intent**       | Issue created with `intent` label |
-| **In Progress**  | PR opened referencing issue       |
-| **Verification** | CI workflow starts                |
-| **Human Review** | Review requested on PR            |
-| **Shipped**      | PR merged to `main`               |
-| **Released**     | PR merged to `release`            |
+| Column           | Color  | Auto-Trigger                                             |
+| ---------------- | ------ | -------------------------------------------------------- |
+| **Backlog**      | Gray   | New items added to project (built-in workflow)           |
+| **Ready**        | Blue   | Manual -- Product Architect moves during triage          |
+| **AI Ready**     | Green  | Manual -- triggers WF01 via org-level webhook            |
+| **In Progress**  | Yellow | WF01 moves here automatically when agent starts working |
+| **Verification** | Orange | CI workflow starts                                       |
+| **Human Review** | Red    | Review requested on PR                                   |
+| **Done**         | Purple | PR merged to `main`                                      |
 
-Configure via GitHub Projects > Settings > Workflows. Use built-in automations for "Item added" and "Pull request merged" triggers.
+Enable the built-in "Item added to project" workflow in **Project Settings > Workflows** to auto-set new items to **Backlog**.
+
+### Org-Level Webhook for Board Events
+
+WF01 is triggered by `projects_v2_item` events, which are **only available as org-level webhooks** (not repo-level). Create one via the `gh` CLI:
+
+```bash
+# Ensure you have the admin:org_hook scope
+gh auth refresh -h github.com -s admin:org_hook
+
+# Create the org-level webhook
+gh api /orgs/YOUR_ORG/hooks --method POST --input - <<'EOF'
+{
+  "name": "web",
+  "active": true,
+  "events": ["projects_v2_item"],
+  "config": {
+    "url": "https://n8n.yourdomain.com/webhook/devllmops-github-board",
+    "content_type": "json",
+    "insecure_ssl": "0"
+  }
+}
+EOF
+```
+
+The repo-level `issues` webhook is **no longer used by WF01**. It remains configured for other workflows if needed.
