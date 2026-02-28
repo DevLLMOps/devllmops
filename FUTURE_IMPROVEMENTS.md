@@ -1,5 +1,9 @@
 # Future Improvements
 
+## Add observability to illustration
+
+Update [schema](docs/assets/illustration.drawio) to add observability as actor for creating Intents or bug reports (IAST, DAST).
+
 ## Add prompt to setup one's repo
 
 Add a Claude-compatible skill or prompt to help people get started with DevLLMOps' AIgile workflow
