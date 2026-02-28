@@ -76,3 +76,7 @@ curl -X PATCH "https://<YOUR_N8N_HOST>/api/v1/workflows/{WORKFLOW_ID}" \
 - n8n Code node sandbox blocks `fetch()`, `require('https')`, `await import('https')`
 - GitHub API: cannot self-approve PRs (422 error if same account opened the PR)
 - `$('Node Name').all()` does NOT work across SplitInBatches loop iterations — only returns last run's items
+
+## Additional instructions
+
+- If you commit, never add Claude authorship

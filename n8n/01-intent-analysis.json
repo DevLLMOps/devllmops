@@ -744,7 +744,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://n8n.berwick.fr/webhook/devllmops-github-helper",
+        "url": "https://<YOUR_N8N_HOST>/webhook/devllmops-github-helper",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
