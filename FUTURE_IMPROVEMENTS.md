@@ -1,5 +1,9 @@
 # Future Improvements
 
+## Add prompt to setup one's repo
+
+Add a Claude-compatible skill or prompt to help people get started with DevLLMOps' AIgile workflow
+
 ## Agentic Auto-Develop Loop (WF01)
 
 The current auto-develop in WF01 uses a single-shot Claude call. A more powerful
@@ -41,3 +45,15 @@ Implement this when any of these become true:
 - n8n fixes the `$schema` bug in `zodToJsonSchema`
 - n8n adds `baseUrl` option to `lmChatAnthropic`
 - n8n lifts Code node sandbox restrictions for HTTP
+
+## Idempotent Branch Creation (WF01)
+
+WF01's `Create Branch` node fails with "Reference already exists" if the branch was
+already created by a previous run (e.g., duplicate webhook trigger or manual re-trigger
+after a partial failure). The entire execution errors out instead of recovering.
+
+### Possible fix
+
+Use `neverError` on the `Create Branch` HTTP Request node, then add a Code node to
+check the response: if 422 "Reference already exists", continue the pipeline using the
+existing branch instead of crashing.

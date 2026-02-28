@@ -443,41 +443,6 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "cond-auto-develop",
-              "leftValue": "={{ $('Build Analysis Comment').item.json.issue_body }}",
-              "rightValue": "[x] Yes, auto-develop",
-              "operator": {
-                "type": "string",
-                "operation": "contains",
-                "name": "filter.operator.contains"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        3340,
-        300
-      ],
-      "id": "wf01-13",
-      "name": "Check Auto-Develop",
-      "notes": "Checks if the issue body contains the auto-develop checkbox. Only proceeds if checked."
-    },
-    {
-      "parameters": {
         "method": "GET",
         "url": "=https://api.github.com/repos/{{ $('Build Analysis Comment').first().json.repo }}/contents/CLAUDE.md?ref={{ encodeURIComponent($('Build Analysis Comment').first().json.branch_name) }}",
         "authentication": "predefinedCredentialType",
@@ -974,17 +939,6 @@
       ]
     },
     "Post Analysis Comment": {
-      "main": [
-        [
-          {
-            "node": "Check Auto-Develop",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check Auto-Develop": {
       "main": [
         [
           {

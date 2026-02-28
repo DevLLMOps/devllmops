@@ -752,7 +752,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.github.com/repos/{{ $json.repo }}/pulls",
+        "url": "=https://api.github.com/repos/{{ $('Build PR Body').first().json.repo }}/pulls",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "githubApi",
         "sendHeaders": true,
@@ -766,7 +766,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ title: $json.title, body: $json.body, head: $json.branch, base: 'main' }) }}",
+        "jsonBody": "={{ JSON.stringify({ title: $('Build PR Body').first().json.title, body: $('Build PR Body').first().json.body, head: $('Build PR Body').first().json.branch, base: 'main' }) }}",
         "options": {
           "timeout": 30000
         }
@@ -774,7 +774,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1800,
+        2240,
         520
       ],
       "id": "wf03-26",
@@ -820,7 +820,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2020,
+        2460,
         520
       ],
       "id": "wf03-27",
@@ -832,6 +832,79 @@
         }
       },
       "notes": "Posts comment on linked issue confirming PR creation. Uses neverError for branches without issue numbers."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/compare/main...{{ encodeURIComponent($json.branch) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        520
+      ],
+      "id": "wf03-28",
+      "name": "Compare to Main",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Compares branch to main to verify there are actual commits. Prevents creating empty PRs.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-has-commits",
+              "leftValue": "={{ $json.ahead_by }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt",
+                "name": "filter.operator.gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2020,
+        520
+      ],
+      "id": "wf03-29",
+      "name": "Has Commits?",
+      "notes": "Proceeds only if branch has commits ahead of main. Prevents empty PR creation."
     }
   ],
   "connections": {
@@ -1110,7 +1183,7 @@
       "main": [
         [
           {
-            "node": "Create PR",
+            "node": "Compare to Main",
             "type": "main",
             "index": 0
           }
@@ -1122,6 +1195,28 @@
         [
           {
             "node": "Post PR Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare to Main": {
+      "main": [
+        [
+          {
+            "node": "Has Commits?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Commits?": {
+      "main": [
+        [
+          {
+            "node": "Create PR",
             "type": "main",
             "index": 0
           }

@@ -1,14 +1,17 @@
 # DevLLMOps
 
+> [!WARNING]
+> This project is under active development. Resources provided (n8n workflows) should be used for experimentation only as no extensive testing has been performed yet.
+
 > Ship fast or die slow. A methodology for AI-native software development in teams.
 
 The traditional SDLC (Requirements > Design > Code > Test > Review > Deploy > Monitor) assumed building was expensive. That constraint is gone. AI agents collapse these stages into a tight loop where intent, code, tests, and deployment converge simultaneously.
 
-**DevLLMOps** is a specification and methodology for teams to develop and deploy software at AI speed, keeping humans in the loop where it matters.
+**DevLLMOps** is a set of specifications and introduces the **AIgile** methodology for teams to develop and deploy software at AI speed, keeping humans in the loop where it matters.
 
-Based on [OCPA specs](https://github.com/flavienbwk/ocpa-specs) for project structure and trunk-based development.
+Based on [OCPA specs](https://github.com/flavienbwk/ocpa-specs) for project structure and [DevOps principles](https://book-devops.berwick.fr/).
 
-## The Workflow
+## The "AIgile" Workflow
 
 ```mermaid
 flowchart TD
