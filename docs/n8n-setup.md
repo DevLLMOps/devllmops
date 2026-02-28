@@ -4,39 +4,31 @@ n8n orchestrates the automated feedback loops between GitHub, AI agents, observa
 
 ## 1. Deploy n8n
 
-```bash
-docker run -d --name n8n \
-  -p 5678:5678 \
-  -v n8n_data:/home/node/.n8n \
-  -e WEBHOOK_URL=https://n8n.yourdomain.com \
-  n8nio/n8n
-```
+Self-host or use the hosted version of n8n.
 
 For production, run behind a reverse proxy (nginx/Caddy) with HTTPS. n8n receives webhooks from GitHub containing repository metadata -- TLS is required.
-
-Open `http://localhost:5678` and create an admin account.
 
 ## 2. Configure Credentials
 
 In n8n **Settings > Credentials**, create:
 
-| Credential | Type | How to Get |
-| --- | --- | --- |
-| **GitHub API** | GitHub OAuth App or PAT | GitHub > Settings > Developer Settings > PATs. Scopes: `repo`, `project`, `workflow`, `actions:read` |
-| **Anthropic API** | Header Auth (name: `x-api-key`) | [console.anthropic.com](https://console.anthropic.com/) > API Keys |
-| **Anthropic API (native)** | Anthropic API (`anthropicApi`) | Same API key as above. Required by WF01's AI Agent node (n8n-langchain nodes use the native credential type) |
-| **n8n Internal API** | Header Auth (name: `X-N8N-API-KEY`) | n8n > Settings > API > Create API Key. Used by workflow 05 to self-track execution costs |
-| **Slack** *(optional)* | Slack OAuth | Slack app with `chat:write` scope for notifications |
+| Credential                 | Type                                | How to Get                                                                                                   |
+| -------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **GitHub API**             | GitHub OAuth App or PAT             | GitHub > Settings > Developer Settings > PATs. Scopes: `repo`, `project`, `workflow`, `actions:read`         |
+| **Anthropic API**          | Header Auth (name: `x-api-key`)     | [console.anthropic.com](https://console.anthropic.com/) > API Keys                                           |
+| **Anthropic API (native)** | Anthropic API (`anthropicApi`)      | Same API key as above. Required by WF01's AI Agent node (n8n-langchain nodes use the native credential type) |
+| **n8n Internal API**       | Header Auth (name: `X-N8N-API-KEY`) | n8n > Settings > API > Create API Key. Used by workflow 05 to self-track execution costs                     |
+| **Slack** *(optional)*     | Slack OAuth                         | Slack app with `chat:write` scope for notifications                                                          |
 
 ## 3. GitHub Webhooks
 
 Each n8n workflow has its own webhook endpoint. WF01 uses an **org-level webhook** for board events; the others use **repo-level webhooks**.
 
-| Webhook | Scope | Payload URL | Events |
-| --- | --- | --- | --- |
-| Board Events (WF01) | **Org-level** | `https://n8n.yourdomain.com/webhook/devllmops-github-board` | `projects_v2_item` |
-| PR AI Review (WF02) | Repo-level | `https://n8n.yourdomain.com/webhook/devllmops-github-pr` | `pull_request` |
-| CI Failure Auto-Fix (WF03) | Repo-level | `https://n8n.yourdomain.com/webhook/devllmops-github-ci` | `check_suite` |
+| Webhook                    | Scope         | Payload URL                                                 | Events             |
+| -------------------------- | ------------- | ----------------------------------------------------------- | ------------------ |
+| Board Events (WF01)        | **Org-level** | `https://n8n.yourdomain.com/webhook/devllmops-github-board` | `projects_v2_item` |
+| PR AI Review (WF02)        | Repo-level    | `https://n8n.yourdomain.com/webhook/devllmops-github-pr`    | `pull_request`     |
+| CI Failure Auto-Fix (WF03) | Repo-level    | `https://n8n.yourdomain.com/webhook/devllmops-github-ci`    | `check_suite`      |
 
 For all webhooks, set:
 
@@ -99,6 +91,7 @@ All AI-generated comments follow a consistent format: a robot header (`> 🤖 Th
 When an issue is moved to **AI Ready** on the GitHub Projects board, the workflow creates a typed feature branch, posts a "starting" comment, moves the item to **In Progress**, then asks Claude for an implementation plan. If the issue has the **auto-develop** checkbox checked, a **single-shot pipeline** fetches source files from the branch, sends them all to Claude in one prompt, parses `FILE` blocks from the response, and commits each changed file. CI then runs automatically, and on success WF03 creates a PR.
 
 The pipeline uses two sub-workflows:
+
 - **Helper sub-workflow** (`01-commit-helper.json`) — handles read/commit operations via the GitHub Contents API (base64 encoding, SHA tracking)
 - **Anthropic Proxy** (`01-anthropic-proxy.json`) — optional proxy for routing Anthropic API calls (used to work around n8n LangChain `$schema` bug; see `FUTURE_IMPROVEMENTS.md`)
 
@@ -106,14 +99,14 @@ The trigger is an org-level `projects_v2_item` webhook (not a repo-level `issues
 
 Branch names are derived from issue labels:
 
-| Label | Prefix | Example |
-| --- | --- | --- |
-| bug | `b/` | `b/#12-fix-login-crash` |
-| feature | `f/` | `f/#5-add-dark-mode` |
-| refactoring | `r/` | `r/#7-extract-utils` |
-| operations | `o/` | `o/#9-upgrade-nginx` |
-| docs & research | `d/` | `d/#11-api-docs` |
-| enhancement *(default)* | `e/` | `e/#3-replace-question-list` |
+| Label                   | Prefix | Example                      |
+| ----------------------- | ------ | ---------------------------- |
+| bug                     | `b/`   | `b/#12-fix-login-crash`      |
+| feature                 | `f/`   | `f/#5-add-dark-mode`         |
+| refactoring             | `r/`   | `r/#7-extract-utils`         |
+| operations              | `o/`   | `o/#9-upgrade-nginx`         |
+| docs & research         | `d/`   | `d/#11-api-docs`             |
+| enhancement *(default)* | `e/`   | `e/#3-replace-question-list` |
 
 ```mermaid
 flowchart TD
@@ -190,30 +183,30 @@ flowchart TD
     POST implementation comment`"]
 ```
 
-| Step | n8n Node | Details |
-| --- | --- | --- |
-| **Trigger** | Webhook | Org-level `projects_v2_item` event on path `/webhook/devllmops-github-board` |
-| **Filter** | IF | `action == "edited"` AND `field_node_id == STATUS_FIELD_ID` AND `content_type == "Issue"` AND `project_node_id` matches |
-| **Fetch item** | HTTP Request | GraphQL query: `node(id: item_id)` fetches Status name, issue number/title/body/labels/repo |
-| **Validate AI Ready** | Code | Returns `[]` (stops execution) if status !== "AI Ready". Extracts issue data + `project_item_node_id` |
-| **Prepare context** | Code | Maps issue labels to branch prefix (`b/f/r/o/d/e`), computes `{prefix}/#N-slug` |
-| **Starting comment** | HTTP Request | Posts acknowledgment with branch name in collapsible details |
-| **Move to In Progress** | HTTP Request | GraphQL mutation: `updateProjectV2ItemFieldValue` sets status to In Progress. Loop-safe: the resulting `projects_v2_item.edited` event is ignored because Validate AI Ready returns `[]` for non-AI-Ready statuses |
-| **Create branch** | HTTP Request | `GET .../git/ref/heads/main` then `POST .../git/refs` to create the typed branch |
-| **AI analysis** | Code + HTTP | Builds request body safely in JS (avoids JSON interpolation issues), calls `claude-haiku-4-5-20251001` |
-| **Post analysis** | Code + HTTP | Parses `SUMMARY:` line from Claude response, posts with AI header + collapsed details |
-| **Check auto-develop** | IF | Checks if issue body contains `[x] Yes, auto-develop` checkbox |
-| **Fetch context** | HTTP Request x2 | Fetches CLAUDE.md (neverError) and recursive file tree from branch |
-| **Select Files** | Code | Extracts backtick-quoted paths from the analysis text, cross-references with the file tree. Falls back to selecting all source files by extension if no exact matches. Always includes CLAUDE.md. Capped at 15 files |
-| **Fetch Loop** | SplitInBatches v3 | Iterates over selected files (batch=1). Output [0]=done, [1]=loop |
-| **Fetch File** | HTTP Request | `GET /repos/{repo}/contents/{path}?ref={branch}` with `neverError: true` |
-| **Build Full Prompt** | Code | Decodes fetched files from base64, builds system + user prompt with FILE block output format. Stores `_shaMap` (path→SHA) and `_contentMap` (path→original content) for downstream use. Warns Claude that analysis paths may not exist. Uses `claude-sonnet-4-20250514` with extended thinking (10K budget tokens) |
-| **Claude Implementation** | HTTP Request | POST to Anthropic Messages API. Sonnet, 16K output tokens, 5-minute timeout, extended thinking enabled. Returns FILE blocks with complete file contents |
-| **Parse & Prepare Commits** | Code | Extracts `FILE:` blocks and `SUMMARY:` from Claude response. Compares each file against `_contentMap` to **filter out unchanged files** (prevents empty commits). Looks up SHAs from `_shaMap` for existing file updates |
-| **Commit Loop** | SplitInBatches v3 | Iterates over parsed files (batch=1). Output [0]=done, [1]=loop |
-| **Commit via Helper** | HTTP Request | POST to helper sub-workflow webhook with path, content, SHA, branch, commit message (`[auto-develop] Update {path}`) |
-| **Format Output** | Code | Reads `_meta` from Parse & Prepare Commits, builds `{output, intermediateSteps}` for the summary |
-| **Summary comment** | Code + HTTP | Posts summary comment listing committed files on the issue |
+| Step                        | n8n Node          | Details                                                                                                                                                                                                                                                                                                            |
+| --------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Trigger**                 | Webhook           | Org-level `projects_v2_item` event on path `/webhook/devllmops-github-board`                                                                                                                                                                                                                                       |
+| **Filter**                  | IF                | `action == "edited"` AND `field_node_id == STATUS_FIELD_ID` AND `content_type == "Issue"` AND `project_node_id` matches                                                                                                                                                                                            |
+| **Fetch item**              | HTTP Request      | GraphQL query: `node(id: item_id)` fetches Status name, issue number/title/body/labels/repo                                                                                                                                                                                                                        |
+| **Validate AI Ready**       | Code              | Returns `[]` (stops execution) if status !== "AI Ready". Extracts issue data + `project_item_node_id`                                                                                                                                                                                                              |
+| **Prepare context**         | Code              | Maps issue labels to branch prefix (`b/f/r/o/d/e`), computes `{prefix}/#N-slug`                                                                                                                                                                                                                                    |
+| **Starting comment**        | HTTP Request      | Posts acknowledgment with branch name in collapsible details                                                                                                                                                                                                                                                       |
+| **Move to In Progress**     | HTTP Request      | GraphQL mutation: `updateProjectV2ItemFieldValue` sets status to In Progress. Loop-safe: the resulting `projects_v2_item.edited` event is ignored because Validate AI Ready returns `[]` for non-AI-Ready statuses                                                                                                 |
+| **Create branch**           | HTTP Request      | `GET .../git/ref/heads/main` then `POST .../git/refs` to create the typed branch                                                                                                                                                                                                                                   |
+| **AI analysis**             | Code + HTTP       | Builds request body safely in JS (avoids JSON interpolation issues), calls `claude-haiku-4-5-20251001`                                                                                                                                                                                                             |
+| **Post analysis**           | Code + HTTP       | Parses `SUMMARY:` line from Claude response, posts with AI header + collapsed details                                                                                                                                                                                                                              |
+| **Check auto-develop**      | IF                | Checks if issue body contains `[x] Yes, auto-develop` checkbox                                                                                                                                                                                                                                                     |
+| **Fetch context**           | HTTP Request x2   | Fetches CLAUDE.md (neverError) and recursive file tree from branch                                                                                                                                                                                                                                                 |
+| **Select Files**            | Code              | Extracts backtick-quoted paths from the analysis text, cross-references with the file tree. Falls back to selecting all source files by extension if no exact matches. Always includes CLAUDE.md. Capped at 15 files                                                                                               |
+| **Fetch Loop**              | SplitInBatches v3 | Iterates over selected files (batch=1). Output [0]=done, [1]=loop                                                                                                                                                                                                                                                  |
+| **Fetch File**              | HTTP Request      | `GET /repos/{repo}/contents/{path}?ref={branch}` with `neverError: true`                                                                                                                                                                                                                                           |
+| **Build Full Prompt**       | Code              | Decodes fetched files from base64, builds system + user prompt with FILE block output format. Stores `_shaMap` (path→SHA) and `_contentMap` (path→original content) for downstream use. Warns Claude that analysis paths may not exist. Uses `claude-sonnet-4-20250514` with extended thinking (10K budget tokens) |
+| **Claude Implementation**   | HTTP Request      | POST to Anthropic Messages API. Sonnet, 16K output tokens, 5-minute timeout, extended thinking enabled. Returns FILE blocks with complete file contents                                                                                                                                                            |
+| **Parse & Prepare Commits** | Code              | Extracts `FILE:` blocks and `SUMMARY:` from Claude response. Compares each file against `_contentMap` to **filter out unchanged files** (prevents empty commits). Looks up SHAs from `_shaMap` for existing file updates                                                                                           |
+| **Commit Loop**             | SplitInBatches v3 | Iterates over parsed files (batch=1). Output [0]=done, [1]=loop                                                                                                                                                                                                                                                    |
+| **Commit via Helper**       | HTTP Request      | POST to helper sub-workflow webhook with path, content, SHA, branch, commit message (`[auto-develop] Update {path}`)                                                                                                                                                                                               |
+| **Format Output**           | Code              | Reads `_meta` from Parse & Prepare Commits, builds `{output, intermediateSteps}` for the summary                                                                                                                                                                                                                   |
+| **Summary comment**         | Code + HTTP       | Posts summary comment listing committed files on the issue                                                                                                                                                                                                                                                         |
 
 ### Workflow 2: PR Opened > AI Review + Routing
 
@@ -273,20 +266,20 @@ flowchart TD
     Approve PR`"]
 ```
 
-| Step | n8n Node | Details |
-| --- | --- | --- |
-| **Trigger** | Webhook | GitHub PR event on path `/webhook/devllmops-github-pr` |
-| **Filter** | IF | `action == "opened"` |
-| **Starting comment** | HTTP Request | Posts acknowledgment with PR number and branch |
-| **Get diff** | HTTP Request | `GET /pulls/{number}` with `Accept: application/vnd.github.v3.diff`, truncated to 50K chars |
-| **Truncate diff** | Code | Truncates diff to 50K chars and passes through PR context |
-| **Fetch CLAUDE.md** | HTTP Request | `GET /repos/{repo}/contents/CLAUDE.md?ref={head_branch}` with `neverError: true`. Provides project context and security-critical paths |
-| **Fetch REVIEW.md** | HTTP Request | `GET /repos/{repo}/contents/REVIEW.md?ref={head_branch}` with `neverError: true`. Provides review guidelines; falls back to defaults if absent |
-| **Fetch TEAM.md** | HTTP Request | `GET /repos/{repo}/contents/TEAM.md?ref={head_branch}` with `neverError: true`. Provides reviewer routing table |
-| **AI review** | Code + HTTP | Decodes all three files from base64, builds prompt with project context + review guidelines + team context, calls `claude-haiku-4-5-20251001` |
-| **Build comment + routing** | Code | Parses Claude response, then dynamically determines `require_human` by matching changed files against CLAUDE.md security-critical paths and resolves reviewers from TEAM.md routing table |
-| **Add label** | HTTP Request | Adds `ai-review-passed` label to signal AI review passed (false branch only) |
-| **Route** | IF | If `require_human`: request review from team members resolved via TEAM.md. Otherwise: add label + auto-approve via `POST /pulls/{number}/reviews` (approve may fail with 422 if the same account opened the PR; the label provides the signal) |
+| Step                        | n8n Node     | Details                                                                                                                                                                                                                                        |
+| --------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Trigger**                 | Webhook      | GitHub PR event on path `/webhook/devllmops-github-pr`                                                                                                                                                                                         |
+| **Filter**                  | IF           | `action == "opened"`                                                                                                                                                                                                                           |
+| **Starting comment**        | HTTP Request | Posts acknowledgment with PR number and branch                                                                                                                                                                                                 |
+| **Get diff**                | HTTP Request | `GET /pulls/{number}` with `Accept: application/vnd.github.v3.diff`, truncated to 50K chars                                                                                                                                                    |
+| **Truncate diff**           | Code         | Truncates diff to 50K chars and passes through PR context                                                                                                                                                                                      |
+| **Fetch CLAUDE.md**         | HTTP Request | `GET /repos/{repo}/contents/CLAUDE.md?ref={head_branch}` with `neverError: true`. Provides project context and security-critical paths                                                                                                         |
+| **Fetch REVIEW.md**         | HTTP Request | `GET /repos/{repo}/contents/REVIEW.md?ref={head_branch}` with `neverError: true`. Provides review guidelines; falls back to defaults if absent                                                                                                 |
+| **Fetch TEAM.md**           | HTTP Request | `GET /repos/{repo}/contents/TEAM.md?ref={head_branch}` with `neverError: true`. Provides reviewer routing table                                                                                                                                |
+| **AI review**               | Code + HTTP  | Decodes all three files from base64, builds prompt with project context + review guidelines + team context, calls `claude-haiku-4-5-20251001`                                                                                                  |
+| **Build comment + routing** | Code         | Parses Claude response, then dynamically determines `require_human` by matching changed files against CLAUDE.md security-critical paths and resolves reviewers from TEAM.md routing table                                                      |
+| **Add label**               | HTTP Request | Adds `ai-review-passed` label to signal AI review passed (false branch only)                                                                                                                                                                   |
+| **Route**                   | IF           | If `require_human`: request review from team members resolved via TEAM.md. Otherwise: add label + auto-approve via `POST /pulls/{number}/reviews` (approve may fail with 422 if the same account opened the PR; the label provides the signal) |
 
 ### Workflow 3: CI Check Suite > Auto-Fix + Auto-PR
 
@@ -362,33 +355,33 @@ flowchart TD
 
 #### Failure path (auto-fix)
 
-| Step | n8n Node | Details |
-| --- | --- | --- |
-| **Trigger** | Webhook | GitHub `check_suite` event on path `/webhook/devllmops-github-ci` |
-| **Filter** | IF | `conclusion == "failure"` |
-| **Find runs** | HTTP Request | `GET /actions/runs?head_sha={sha}&status=failure` (note: `check_suite.id` is **not** a run ID) |
-| **Comment target** | Code | Extracts PR number from `check_suite.pull_requests`, or issue number from branch name (`{prefix}/#N-...`). Sets `skip_autofix = true` if head commit starts with `[auto-fix]` |
-| **Get logs** | HTTP Request x2 | First request gets the 302 redirect URL (with `followRedirects: false`, `neverError: true`), second request downloads the logs **without auth** (GitHub's signed URL rejects forwarded auth headers) |
-| **AI diagnosis** | Code + HTTP | `claude-sonnet-4-6` analyzes logs and step summary, returns root cause + exact diff fix + optional `AUTO_FIX` block |
-| **Post analysis** | Code + HTTP | Parses `SUMMARY:` line, posts with AI header, collapsed details, and link to the failed run |
-| **Parse auto-fix** | Code | Extracts `AUTO_FIX_FILE`, `AUTO_FIX_OLD`, `AUTO_FIX_NEW` markers from Claude response |
-| **Has fix?** | IF | Proceeds only if `has_fix == true` AND `skip_autofix == false` (prevents infinite loops) |
-| **Get file** | HTTP Request | `GET /repos/{owner}/{repo}/contents/{path}?ref={branch}` — fetches base64 content + SHA |
-| **Apply fix** | Code | Base64-decodes file, applies string replacement, re-encodes, builds PUT body with `[auto-fix]` commit message |
-| **Commit fix** | HTTP Request | `PUT /repos/{owner}/{repo}/contents/{path}` with new content, SHA, and branch |
-| **Post fix comment** | HTTP Request | Posts comment confirming the auto-fix commit with file and branch details |
+| Step                 | n8n Node        | Details                                                                                                                                                                                              |
+| -------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Trigger**          | Webhook         | GitHub `check_suite` event on path `/webhook/devllmops-github-ci`                                                                                                                                    |
+| **Filter**           | IF              | `conclusion == "failure"`                                                                                                                                                                            |
+| **Find runs**        | HTTP Request    | `GET /actions/runs?head_sha={sha}&status=failure` (note: `check_suite.id` is **not** a run ID)                                                                                                       |
+| **Comment target**   | Code            | Extracts PR number from `check_suite.pull_requests`, or issue number from branch name (`{prefix}/#N-...`). Sets `skip_autofix = true` if head commit starts with `[auto-fix]`                        |
+| **Get logs**         | HTTP Request x2 | First request gets the 302 redirect URL (with `followRedirects: false`, `neverError: true`), second request downloads the logs **without auth** (GitHub's signed URL rejects forwarded auth headers) |
+| **AI diagnosis**     | Code + HTTP     | `claude-sonnet-4-6` analyzes logs and step summary, returns root cause + exact diff fix + optional `AUTO_FIX` block                                                                                  |
+| **Post analysis**    | Code + HTTP     | Parses `SUMMARY:` line, posts with AI header, collapsed details, and link to the failed run                                                                                                          |
+| **Parse auto-fix**   | Code            | Extracts `AUTO_FIX_FILE`, `AUTO_FIX_OLD`, `AUTO_FIX_NEW` markers from Claude response                                                                                                                |
+| **Has fix?**         | IF              | Proceeds only if `has_fix == true` AND `skip_autofix == false` (prevents infinite loops)                                                                                                             |
+| **Get file**         | HTTP Request    | `GET /repos/{owner}/{repo}/contents/{path}?ref={branch}` — fetches base64 content + SHA                                                                                                              |
+| **Apply fix**        | Code            | Base64-decodes file, applies string replacement, re-encodes, builds PUT body with `[auto-fix]` commit message                                                                                        |
+| **Commit fix**       | HTTP Request    | `PUT /repos/{owner}/{repo}/contents/{path}` with new content, SHA, and branch                                                                                                                        |
+| **Post fix comment** | HTTP Request    | Posts comment confirming the auto-fix commit with file and branch details                                                                                                                            |
 
 #### Success path (auto-PR)
 
-| Step | n8n Node | Details |
-| --- | --- | --- |
-| **Extract branch info** | Code | Validates `conclusion == "success"`, skips protected branches (`main`, `master`, `release`, `develop`), extracts repo/owner/branch/issue_number using branch regex from wf03-04 |
-| **Should create PR?** | IF | Proceeds only if `should_create_pr == true` |
-| **Check existing PR** | HTTP Request | `GET /repos/{repo}/pulls?head={owner}:{branch}&state=open` — prevents duplicate PRs |
-| **Build PR body** | Code | Humanizes branch slug into title (e.g. `f/#5-add-dark-mode` -> `Feature: Add Dark Mode (#5)`), builds body with AI header + `Closes #N` |
-| **No PR yet?** | IF | Proceeds only if `has_existing_pr == false` |
-| **Create PR** | HTTP Request | `POST /repos/{repo}/pulls` with title, body, head=branch, base=main. Triggers WF02 via `pull_request.opened` webhook |
-| **Post PR comment** | HTTP Request | Posts comment on linked issue confirming PR creation (`neverError: true` for branches without issue numbers) |
+| Step                    | n8n Node     | Details                                                                                                                                                                         |
+| ----------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Extract branch info** | Code         | Validates `conclusion == "success"`, skips protected branches (`main`, `master`, `release`, `develop`), extracts repo/owner/branch/issue_number using branch regex from wf03-04 |
+| **Should create PR?**   | IF           | Proceeds only if `should_create_pr == true`                                                                                                                                     |
+| **Check existing PR**   | HTTP Request | `GET /repos/{repo}/pulls?head={owner}:{branch}&state=open` — prevents duplicate PRs                                                                                             |
+| **Build PR body**       | Code         | Humanizes branch slug into title (e.g. `f/#5-add-dark-mode` -> `Feature: Add Dark Mode (#5)`), builds body with AI header + `Closes #N`                                         |
+| **No PR yet?**          | IF           | Proceeds only if `has_existing_pr == false`                                                                                                                                     |
+| **Create PR**           | HTTP Request | `POST /repos/{repo}/pulls` with title, body, head=branch, base=main. Triggers WF02 via `pull_request.opened` webhook                                                            |
+| **Post PR comment**     | HTTP Request | Posts comment on linked issue confirming PR creation (`neverError: true` for branches without issue numbers)                                                                    |
 
 ### Workflow 4: Production Alert > Agent Investigation
 
@@ -409,12 +402,12 @@ flowchart TD
     POST GitHub issue`"]
 ```
 
-| Step | n8n Node | Details |
-| --- | --- | --- |
-| **Trigger** | Webhook | Incoming alert on path `/webhook/devllmops-production-alert` from Prometheus, Grafana, Datadog, or UptimeKuma |
-| **Normalize** | Code | Extracts `alert_name`, `severity`, `description`, `service` from various monitoring payload formats |
-| **AI investigation** | Code + HTTP | `claude-sonnet-4-6` provides root cause, impact assessment, mitigation steps, follow-up actions |
-| **Create issue** | Code + HTTP | Title: `[ALERT] {alert_name}`, labels: `incident` + `intent`, body with AI header + collapsed details. The `intent` label triggers Workflow 1 for further analysis |
+| Step                 | n8n Node    | Details                                                                                                                                                            |
+| -------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Trigger**          | Webhook     | Incoming alert on path `/webhook/devllmops-production-alert` from Prometheus, Grafana, Datadog, or UptimeKuma                                                      |
+| **Normalize**        | Code        | Extracts `alert_name`, `severity`, `description`, `service` from various monitoring payload formats                                                                |
+| **AI investigation** | Code + HTTP | `claude-sonnet-4-6` provides root cause, impact assessment, mitigation steps, follow-up actions                                                                    |
+| **Create issue**     | Code + HTTP | Title: `[ALERT] {alert_name}`, labels: `incident` + `intent`, body with AI header + collapsed details. The `intent` label triggers Workflow 1 for further analysis |
 
 ### Workflow 5: Daily Cost Report
 
@@ -440,28 +433,28 @@ flowchart TD
     F --> G
 ```
 
-| Step | n8n Node | Details |
-| --- | --- | --- |
-| **Trigger** | Cron | Daily at 09:00 UTC |
-| **Fetch workflows** | HTTP Request | `GET /api/v1/workflows` via n8n Internal API credential -- maps workflow IDs to names and AI models |
-| **Fetch executions** | HTTP Request | `GET /api/v1/executions?limit=250&status=success` -- last 250 successful executions |
-| **Calculate** | Code | Filters to last 24h, estimates tokens per execution based on model (Haiku for WF 01/02, Sonnet for WF 03/04), stores daily costs in `staticData` for a real 7-day rolling average |
-| **Threshold check** | IF | `daily_cost > 1.5 * rolling_average` (requires at least 2 days of history) |
-| **Alert / Summary** | Code + HTTP | Creates a GitHub issue with AI header, one-line cost summary, and collapsible breakdown by workflow. Labels: `cost-alert` or `daily-report` |
+| Step                 | n8n Node     | Details                                                                                                                                                                           |
+| -------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Trigger**          | Cron         | Daily at 09:00 UTC                                                                                                                                                                |
+| **Fetch workflows**  | HTTP Request | `GET /api/v1/workflows` via n8n Internal API credential -- maps workflow IDs to names and AI models                                                                               |
+| **Fetch executions** | HTTP Request | `GET /api/v1/executions?limit=250&status=success` -- last 250 successful executions                                                                                               |
+| **Calculate**        | Code         | Filters to last 24h, estimates tokens per execution based on model (Haiku for WF 01/02, Sonnet for WF 03/04), stores daily costs in `staticData` for a real 7-day rolling average |
+| **Threshold check**  | IF           | `daily_cost > 1.5 * rolling_average` (requires at least 2 days of history)                                                                                                        |
+| **Alert / Summary**  | Code + HTTP  | Creates a GitHub issue with AI header, one-line cost summary, and collapsible breakdown by workflow. Labels: `cost-alert` or `daily-report`                                       |
 
 ## 5. Import Workflow Templates
 
 Ready-to-import n8n workflow JSON files are available in the [`n8n/`](../n8n/) directory:
 
-| File | Workflow |
-| --- | --- |
-| [`01-intent-analysis.json`](../n8n/01-intent-analysis.json) | Board-Driven Intent Analysis + Auto-Develop |
-| [`01-commit-helper.json`](../n8n/01-commit-helper.json) | Commit Helper (sub-workflow for WF01 auto-develop) |
-| [`01-anthropic-proxy.json`](../n8n/01-anthropic-proxy.json) | Anthropic Proxy (sub-workflow, strips `$schema` from tool schemas) |
-| [`02-pr-ai-review.json`](../n8n/02-pr-ai-review.json) | PR Opened > AI Review + Routing |
-| [`03-ci-failure-autofix.json`](../n8n/03-ci-failure-autofix.json) | CI Failure > Agent Auto-Fix |
-| [`04-production-alert.json`](../n8n/04-production-alert.json) | Production Alert > Agent Investigation |
-| [`05-daily-cost-report.json`](../n8n/05-daily-cost-report.json) | Daily Cost Report |
+| File                                                              | Workflow                                                           |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [`01-intent-analysis.json`](../n8n/01-intent-analysis.json)       | Board-Driven Intent Analysis + Auto-Develop                        |
+| [`01-commit-helper.json`](../n8n/01-commit-helper.json)           | Commit Helper (sub-workflow for WF01 auto-develop)                 |
+| [`01-anthropic-proxy.json`](../n8n/01-anthropic-proxy.json)       | Anthropic Proxy (sub-workflow, strips `$schema` from tool schemas) |
+| [`02-pr-ai-review.json`](../n8n/02-pr-ai-review.json)             | PR Opened > AI Review + Routing                                    |
+| [`03-ci-failure-autofix.json`](../n8n/03-ci-failure-autofix.json) | CI Failure > Agent Auto-Fix                                        |
+| [`04-production-alert.json`](../n8n/04-production-alert.json)     | Production Alert > Agent Investigation                             |
+| [`05-daily-cost-report.json`](../n8n/05-daily-cost-report.json)   | Daily Cost Report                                                  |
 
 ### How to import
 
@@ -470,13 +463,13 @@ Ready-to-import n8n workflow JSON files are available in the [`n8n/`](../n8n/) d
 3. After import, open each node with a credential reference and select your own credentials (look for nodes marked `REPLACE_ME`)
 4. Find-and-replace the following placeholders across all workflows:
 
-| Placeholder | Replace with |
-| --- | --- |
-| `REPLACE_ME` (credential IDs) | Select your own credentials in each node |
-| `REPLACE_ME_HELPER_WF_ID` | The n8n workflow ID of the deployed `01-commit-helper.json` (used by WF01's Commit File tool) |
-| `OWNER/REPO` | Your GitHub `org/repo` (e.g., `MyOrg/my-app`) |
-| `N8N_HOST` | Your n8n hostname (e.g., `n8n.yourdomain.com`) -- used by workflow 05 |
-| `REPLACE_WITH_QUALITY_SENTINEL_HANDLE` | Your Quality Sentinel's GitHub username (workflow 02) |
+| Placeholder                            | Replace with                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `REPLACE_ME` (credential IDs)          | Select your own credentials in each node                                                      |
+| `REPLACE_ME_HELPER_WF_ID`              | The n8n workflow ID of the deployed `01-commit-helper.json` (used by WF01's Commit File tool) |
+| `OWNER/REPO`                           | Your GitHub `org/repo` (e.g., `MyOrg/my-app`)                                                 |
+| `N8N_HOST`                             | Your n8n hostname (e.g., `n8n.yourdomain.com`) -- used by workflow 05                         |
+| `REPLACE_WITH_QUALITY_SENTINEL_HANDLE` | Your Quality Sentinel's GitHub username (workflow 02)                                         |
 
 5. Activate the workflow
 

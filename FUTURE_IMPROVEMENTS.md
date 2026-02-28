@@ -4,6 +4,10 @@
 
 Add a Claude-compatible skill or prompt to help people get started with DevLLMOps' AIgile workflow
 
+## Support conflicts
+
+Because there will be conflicts as AIs will simultaneously work on the same code
+
 ## Agentic Auto-Develop Loop (WF01)
 
 The current auto-develop in WF01 uses a single-shot Claude call. A more powerful

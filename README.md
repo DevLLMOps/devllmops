@@ -1,15 +1,26 @@
 # DevLLMOps
 
+<p align="center">
+  <img src="docs/assets/logo.png" alt="DevLLMOps" width="256" /><br/>
+  <img src="docs/assets/badge-aigile.svg" alt="AIgile methodology" />
+</p>
+
 > [!WARNING]
 > This project is under active development. Resources provided (n8n workflows) should be used for experimentation only as no extensive testing has been performed yet.
 
+**DevLLMOps** is a set of specifications, tools and introduces the **AIgile** methodology for teams to develop and deploy software at AI speed, keeping humans in the loop where it matters.
+
 > Ship fast or die slow. A methodology for AI-native software development in teams.
+
+## Why
 
 The traditional SDLC (Requirements > Design > Code > Test > Review > Deploy > Monitor) assumed building was expensive. That constraint is gone. AI agents collapse these stages into a tight loop where intent, code, tests, and deployment converge simultaneously.
 
-**DevLLMOps** is a set of specifications and introduces the **AIgile** methodology for teams to develop and deploy software at AI speed, keeping humans in the loop where it matters.
+Based on [OCPA specs](https://github.com/flavienbwk/ocpa-specs) for a testable project structure and rooted in [DevOps principles](https://book-devops.berwick.fr/) for reliability and maintainability.
 
-Based on [OCPA specs](https://github.com/flavienbwk/ocpa-specs) for project structure and [DevOps principles](https://book-devops.berwick.fr/).
+## Demo Project
+
+See [devllmops-demo-quizapp](https://github.com/DevLLMOps/devllmops-demo-quizapp) for a reference implementation: a quiz app built end-to-end with DevLLMOps + OCPA specs, including CI workflows, AI review, intent-driven issues, and `CLAUDE.md`/`TEAM.md`/`REVIEW.md` configuration.
 
 ## The "AIgile" Workflow
 
@@ -71,7 +82,7 @@ See [GitHub Setup](docs/github-setup.md) for step-by-step configuration.
 
 ```text
 .
-├── .github/workflows/     # CI/CD with AI verification
+├── .github/               # CI/CD pipelines (guardrails) and templates
 ├── app/                   # Service(s) with Dockerfile
 ├── docs/                  # All documentation (except README.md)
 ├── k8s/                   # Helm chart (if using K8s)
@@ -83,13 +94,14 @@ See [GitHub Setup](docs/github-setup.md) for step-by-step configuration.
 ├── Makefile               # Standardized commands
 ├── CLAUDE.md              # Agent context (architecture, conventions)
 ├── TEAM.md                # Team roster for agent review routing
+├── REVIEW.md                # Team roster for agent review routing
 ├── VERSION                # Semantic version
 └── .env.example           # Environment variables template
 ```
 
 See [OCPA Specs](https://music-ocpa.music-industry.dev/) for full conventions (versioning, Dockerfiles, Makefile commands, env validation).
 
-Templates available: [CLAUDE.md](templates/CLAUDE.md), [TEAM.md](templates/TEAM.md).
+Templates available: [CLAUDE.md](templates/CLAUDE.md), [TEAM.md](templates/TEAM.md), [REVIEW.md](templates/REVIEW.md).
 
 ### 4. Create Your First Intent
 
@@ -103,10 +115,6 @@ Constraints: Tokens expire after 1h. Use bcrypt for password hashing.
 ```
 
 Then let the agent work. Steer, iterate, ship.
-
-## Demo Project
-
-See [devllmops-demo-quizapp](https://github.com/DevLLMOps/devllmops-demo-quizapp) for a reference implementation: a quiz app built end-to-end with DevLLMOps + OCPA specs, including CI workflows, AI review, intent-driven issues, and `CLAUDE.md`/`TEAM.md` configuration.
 
 ## Cost Warning
 

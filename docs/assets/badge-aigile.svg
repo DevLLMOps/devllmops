@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="28" viewBox="0 0 220 28">
+  <defs>
+    <linearGradient id="left" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2D2D3F"/>
+      <stop offset="100%" stop-color="#3A3A50"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6C5CE7"/>
+      <stop offset="50%" stop-color="#0984E3"/>
+      <stop offset="100%" stop-color="#00B894"/>
+    </linearGradient>
+    <clipPath id="rounded">
+      <rect width="220" height="28" rx="6"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#rounded)">
+    <!-- Left section -->
+    <rect width="116" height="28" fill="url(#left)"/>
+    <!-- Right section -->
+    <rect x="116" width="104" height="28" fill="url(#right)"/>
+    <!-- Subtle inner shadow -->
+    <rect width="220" height="28" rx="6" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  </g>
+
+  <!-- Mini infinity icon -->
+  <g transform="translate(18, 14) scale(0.28)">
+    <path d="M-28,0 C-28,-18 -12,-23 0,-12 C12,-23 28,-18 28,0 C28,18 12,23 0,12 C-12,23 -28,18 -28,0 Z"
+          fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity="0.9"/>
+    <circle cx="0" cy="0" r="3.5" fill="#FFFFFF" opacity="0.9"/>
+  </g>
+
+  <!-- Left text -->
+  <text x="68" y="18" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="0.5">DevLLMOps</text>
+
+  <!-- Right text -->
+  <text x="168" y="18" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">AIgile</text>
+</svg>
