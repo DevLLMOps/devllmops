@@ -60,8 +60,6 @@ WF01's `Create Branch` node fails with "Reference already exists" if the branch 
 already created by a previous run (e.g., duplicate webhook trigger or manual re-trigger
 after a partial failure). The entire execution errors out instead of recovering.
 
-### Possible fix
+## Claude Skills
 
-Use `neverError` on the `Create Branch` HTTP Request node, then add a Code node to
-check the response: if 422 "Reference already exists", continue the pipeline using the
-existing branch instead of crashing.
+A list of default skills for n8n workflows agents to support a company's governance.
