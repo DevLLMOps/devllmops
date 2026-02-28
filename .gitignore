@@ -4,3 +4,4 @@ PROMPT.md
 !.env.example
 node_modules/
 .claude/
+.$*.drawio.bkp

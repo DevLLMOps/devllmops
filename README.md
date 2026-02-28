@@ -46,6 +46,8 @@ Stages don't get faster. They merge. The agent doesn't know what "phase" it's in
 
 ## Team Roles
 
+![Workcycle](./docs/assets/illustration.jpg)
+
 | Role                            | Evolved From    | Responsibility                                                                                                 |
 | ------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------- |
 | **Product Architect**           | CTO / Tech Lead | Defines intent, sets architecture guardrails, handles exceptions agents can't resolve, makes release decisions |
