@@ -5,3 +5,4 @@ PROMPT.md
 node_modules/
 .claude/
 .$*.drawio.bkp
+n8n/credentials.env

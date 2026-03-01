@@ -16,24 +16,25 @@ DevLLMOps is an AI-powered software development lifecycle automation platform bu
 ## Project Structure
 
 ```text
-├── n8n/                    # Workflow JSON files (source of truth)
-│   ├── 01-commit-helper.json      # WF01 sub-workflow: GitHub read/commit helper
-│   ├── 01-anthropic-proxy.json    # WF01 sub-workflow: Anthropic API proxy
-│   ├── 01-intent-analysis.json     # WF01: Intent analysis + auto-develop
-│   ├── 02-pr-ai-review.json       # WF02: PR review + auto-fix + re-review
-│   ├── 03-ci-failure-autofix.json # WF03: CI failure auto-fix + auto-PR
-│   ├── 04-production-alert.json   # WF04: Production alert handling
-│   └── 05-daily-cost-report.json  # WF05: Daily cost reporting
+├── n8n/
+│   ├── workflows/          # Template JSONs (jsCode replaced with markers)
+│   ├── scripts/            # Extracted jsCode (one .js per Code node)
+│   ├── deploy.py           # Build + deploy script
+│   ├── extract.py          # One-time extraction script
+│   ├── credentials.env.example  # Credential config template
+│   └── credentials.env     # Actual credentials (gitignored)
 ├── docs/                   # Documentation and assets
 ├── templates/              # Template files for target repos (CLAUDE.md, TEAM.md, etc.)
+├── Makefile                # Deploy/build targets
 ├── FUTURE_IMPROVEMENTS.md  # Tracked improvement ideas and blockers
 └── README.md
 ```
 
 ## Key Conventions
 
-- Workflow JSON files in `n8n/` are the source of truth; deploy via n8n REST API
-- Template credential IDs use `REPLACE_ME`; live IDs are in memory files only
+- Source of truth: `n8n/scripts/*.js` (jsCode) + `n8n/workflows/*.json` (templates)
+- Deploy with `make deploy-all` or `make deploy-02-pr-ai-review`
+- Template credential IDs use `REPLACE_ME`; live IDs are in `n8n/credentials.env` (gitignored)
 - Node IDs follow pattern `wfXX-NN` (e.g., `wf02-fix03` for WF02 fix node 3)
 - SplitInBatches v3: output [0]=done, [1]=loop (NOT [0]=loop, [1]=done)
 - Branch naming: `{prefix}/#N-slug` where prefix is b/f/r/o/d/e
@@ -57,17 +58,20 @@ See [AD-001](docs/ad/001-n8n-variables-not-suitable-for-prompts.md). Rejected �
 ## Common Commands
 
 ```bash
-# Deploy a workflow to n8n
-curl -X PUT "https://<YOUR_N8N_HOST>/api/v1/workflows/{WORKFLOW_ID}" \
-  -H "X-N8N-API-KEY: $(cat ~/.n8n_key)" \
-  -H "Content-Type: application/json" \
-  -d @n8n/02-pr-ai-review.json
+# Deploy all workflows
+make deploy-all
 
-# Activate a workflow
-curl -X PATCH "https://<YOUR_N8N_HOST>/api/v1/workflows/{WORKFLOW_ID}" \
-  -H "X-N8N-API-KEY: $(cat ~/.n8n_key)" \
-  -H "Content-Type: application/json" \
-  -d '{"active": true}'
+# Deploy a specific workflow
+make deploy-02-pr-ai-review
+
+# Build without deploying (outputs JSON to stdout)
+make build-02-pr-ai-review
+
+# List workflows and their IDs
+make list-workflows
+
+# Re-extract scripts from current JSONs (one-time setup)
+python3 n8n/extract.py
 ```
 
 ## Known Issues / Gotchas

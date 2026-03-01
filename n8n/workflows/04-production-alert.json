@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst alertName = body.commonLabels?.alertname || body.title || body.alert_name || 'Unknown Alert';\nconst severity = body.commonLabels?.severity || body.severity || 'warning';\nconst description = body.commonAnnotations?.description || body.message || body.body || JSON.stringify(body);\nconst service = body.commonLabels?.service || body.service || body.monitor || 'unknown';\nreturn [{ json: { alert_name: alertName, severity, description, service } }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf04-02.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -34,7 +34,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const ctx = $input.first().json;\nconst requestBody = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 4096,\n  messages: [{\n    role: 'user',\n    content: 'You are an SRE investigating a production alert.\\n\\n'      + 'Provide your response in EXACTLY this format:\\n'      + 'SUMMARY: [one sentence describing the likely root cause and recommended action]\\n'      + '---\\n'      + '[full detailed investigation including:\\n'      + '1. Likely root cause\\n'      + '2. Impact assessment (users affected, severity)\\n'      + '3. Immediate mitigation steps\\n'      + '4. Recommended follow-up actions]\\n\\n'      + 'Alert name: ' + ctx.alert_name + '\\n'      + 'Severity: ' + ctx.severity + '\\n'      + 'Service: ' + ctx.service + '\\n'      + 'Description: ' + ctx.description\n  }]\n};\nreturn [{ json: requestBody }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf04-03.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -93,7 +93,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const alert = $('Normalize Alert').first().json;\nconst claudeText = $input.first().json.content[0].text;\n// Parse SUMMARY and details\nlet summary = 'Production alert: ' + alert.alert_name + ' on ' + alert.service + '.';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const match = parts[0].trim().match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst issueBody = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full investigation</summary>\\n\\n'\n  + '## Alert Details\\n\\n'\n  + '| Field | Value |\\n|---|---|\\n'\n  + '| **Alert** | ' + alert.alert_name + ' |\\n'\n  + '| **Severity** | ' + alert.severity + ' |\\n'\n  + '| **Service** | ' + alert.service + ' |\\n\\n'\n  + '## Agent Investigation\\n\\n'\n  + details + '\\n\\n'\n  + '</details>';\nreturn [{ json: {\n  title: '[ALERT] ' + alert.alert_name,\n  body: issueBody,\n  labels: ['incident', 'intent']\n} }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf04-05.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

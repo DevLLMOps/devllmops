@@ -10,7 +10,7 @@ For production, run behind a reverse proxy (nginx/Caddy) with HTTPS. n8n receive
 
 ## 2. Configure Credentials
 
-In n8n **Settings > Credentials**, create:
+The deploy script can auto-create credential entries on n8n (see section 5). You then fill in the secret values via the n8n UI. Here are the credentials you'll need:
 
 | Credential                 | Type                                | How to Get                                                                                                   |
 | -------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -442,36 +442,67 @@ flowchart TD
 | **Threshold check**  | IF           | `daily_cost > 1.5 * rolling_average` (requires at least 2 days of history)                                                                                                        |
 | **Alert / Summary**  | Code + HTTP  | Creates a GitHub issue with AI header, one-line cost summary, and collapsible breakdown by workflow. Labels: `cost-alert` or `daily-report`                                       |
 
-## 5. Import Workflow Templates
+## 5. Deploy Workflows
 
-Ready-to-import n8n workflow JSON files are available in the [`n8n/`](../n8n/) directory:
+Workflow source code lives in two directories:
 
-| File                                                              | Workflow                                                           |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| [`01-intent-analysis.json`](../n8n/01-intent-analysis.json)       | Board-Driven Intent Analysis + Auto-Develop                        |
-| [`01-commit-helper.json`](../n8n/01-commit-helper.json)           | Commit Helper (sub-workflow for WF01 auto-develop)                 |
-| [`01-anthropic-proxy.json`](../n8n/01-anthropic-proxy.json)       | Anthropic Proxy (sub-workflow, strips `$schema` from tool schemas) |
-| [`02-pr-ai-review.json`](../n8n/02-pr-ai-review.json)             | PR Opened > AI Review + Routing                                    |
-| [`03-ci-failure-autofix.json`](../n8n/03-ci-failure-autofix.json) | CI Failure > Agent Auto-Fix                                        |
-| [`04-production-alert.json`](../n8n/04-production-alert.json)     | Production Alert > Agent Investigation                             |
-| [`05-daily-cost-report.json`](../n8n/05-daily-cost-report.json)   | Daily Cost Report                                                  |
+| Directory            | Contents                                                       |
+| -------------------- | -------------------------------------------------------------- |
+| `n8n/workflows/`     | Template JSONs (node layout, connections, settings)             |
+| `n8n/scripts/`       | Extracted jsCode (one `.js` file per Code node, by node ID)    |
 
-### How to import
+A Python deploy script (`n8n/deploy.py`) injects scripts into templates, maps credentials, and deploys via the n8n REST API. Missing credentials and workflows are auto-created on first run.
 
-1. Open n8n and go to **Workflows > Import from File**
-2. Select the JSON file for the workflow you want
-3. After import, open each node with a credential reference and select your own credentials (look for nodes marked `REPLACE_ME`)
-4. Find-and-replace the following placeholders across all workflows:
+### First-time setup
 
-| Placeholder                            | Replace with                                                                                  |
-| -------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `REPLACE_ME` (credential IDs)          | Select your own credentials in each node                                                      |
-| `REPLACE_ME_HELPER_WF_ID`              | The n8n workflow ID of the deployed `01-commit-helper.json` (used by WF01's Commit File tool) |
-| `OWNER/REPO`                           | Your GitHub `org/repo` (e.g., `MyOrg/my-app`)                                                 |
-| `N8N_HOST`                             | Your n8n hostname (e.g., `n8n.yourdomain.com`) -- used by workflow 05                         |
-| `REPLACE_WITH_QUALITY_SENTINEL_HANDLE` | Your Quality Sentinel's GitHub username (workflow 02)                                         |
+```bash
+# 1. Copy the credentials template
+cp n8n/credentials.env.example n8n/credentials.env
 
-5. Activate the workflow
+# 2. Fill in your n8n host and API key file path
+#    N8N_HOST=https://n8n.yourdomain.com
+#    N8N_API_KEY_FILE=~/.n8n_key
+
+# 3. Run setup — creates credentials + workflows on n8n, saves IDs
+make setup
+
+# 4. Configure credential secrets in the n8n UI
+#    (the script creates empty credentials; fill in tokens/keys via the UI)
+```
+
+The setup is idempotent: running it again skips already-configured resources.
+
+### Deploying workflows
+
+```bash
+# Deploy all workflows (includes setup check)
+make deploy-all
+
+# Deploy a specific workflow
+make deploy-02-pr-ai-review
+
+# Build without deploying (outputs JSON to stdout)
+make build-02-pr-ai-review
+
+# List workflows and their n8n IDs
+make list-workflows
+```
+
+### Editing workflow code
+
+1. Edit the `.js` file in `n8n/scripts/` (e.g., `wf02-08.js` for WF02's "Build Claude Body" node)
+2. Run `make deploy-02-pr-ai-review` to inject and deploy
+3. The workflow is automatically activated
+
+### Remaining placeholders
+
+After deploying, you may still need to update these placeholders in the n8n UI:
+
+| Placeholder                            | Replace with                                                    |
+| -------------------------------------- | --------------------------------------------------------------- |
+| `REPLACE_ME_HELPER_WF_ID`              | The workflow ID of `01-commit-helper` (shown by `make list-workflows`) |
+| `OWNER/REPO`                           | Your GitHub `org/repo` (e.g., `MyOrg/my-app`)                   |
+| `REPLACE_WITH_QUALITY_SENTINEL_HANDLE` | Your Quality Sentinel's GitHub username (workflow 02)           |
 
 ## 6. Connecting Workflows to the Projects Board
 

@@ -55,7 +55,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const webhook = $('GitHub Webhook').first().json.body;\nconst pr = webhook.pull_request;\nreturn [{ json: {\n  pr_number: pr.number,\n  pr_title: pr.title,\n  repo: webhook.repository.full_name,\n  head_branch: pr.head.ref\n} }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-03.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -84,7 +84,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Starting AI code review for PR #' + $json.pr_number + '.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **PR:** #' + $json.pr_number + ' \u2014 ' + $json.pr_title + '\\n- **Branch:** `' + $json.head_branch + '`\\n\\nFetching diff and running analysis...\\n\\n</details>' }) }}",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Starting AI code review for PR #' + $json.pr_number + '.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **PR:** #' + $json.pr_number + ' — ' + $json.pr_title + '\\n- **Branch:** `' + $json.head_branch + '`\\n\\nFetching diff and running analysis...\\n\\n</details>' }) }}",
         "options": {
           "timeout": 30000
         }
@@ -186,7 +186,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const diff = $('Get Full Diff').first().json.data || '';\nconst truncatedDiff = typeof diff === 'string' ? diff.substring(0, 50000) : JSON.stringify(diff).substring(0, 50000);\nconst ctx = $('Extract PR Info').first().json;\nreturn [{ json: { diff: truncatedDiff, ...ctx } }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-07.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -280,7 +280,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const ctx = $('Check Security Paths').first().json;\n\n// Decode CLAUDE.md (base64 from GitHub Contents API)\nlet claudeMd = 'Not available.';\ntry {\n  const raw = $('Fetch CLAUDE.md').first().json;\n  if (raw.content) {\n    claudeMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n  }\n} catch (e) {}\n\n// Decode REVIEW.md (base64 from GitHub Contents API)\nlet reviewMd = '';\ntry {\n  const raw = $('Fetch REVIEW.md').first().json;\n  if (raw.content) {\n    reviewMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n  }\n} catch (e) {}\n\n// Decode TEAM.md (base64 from GitHub Contents API)\nlet teamMd = '';\ntry {\n  const raw = $('Fetch TEAM.md').first().json;\n  if (raw.content) {\n    teamMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n  }\n} catch (e) {}\n\n// Fall back to hardcoded defaults if REVIEW.md is absent\nconst guidelines = reviewMd || 'Review for:\\n1. Bugs and logic errors\\n2. OWASP Top 10 security issues\\n3. Missing error handling\\n4. Performance concerns';\n\nconst content = 'You are a senior code reviewer. Review this PR diff.\\n\\n'\n  + 'PROJECT CONTEXT (CLAUDE.md):\\n' + claudeMd + '\\n\\n'\n  + 'REVIEW GUIDELINES (REVIEW.md):\\n' + guidelines + '\\n\\n'\n  + (teamMd ? 'TEAM CONTEXT (TEAM.md):\\n' + teamMd + '\\n\\n' : '')\n  + 'Follow the review guidelines above. Provide your response in EXACTLY this format:\\n'\n  + 'SUMMARY: [one sentence overall assessment]\\n'\n  + 'VERDICT: [CRITICAL if any Critical-severity finding, HIGH if any High-severity finding, or PASS if none]\\n'\n  + '---\\n'\n  + '[detailed review following the guidelines above]\\n\\n'\n  + 'IMPORTANT: The VERDICT line must reflect the HIGHEST severity finding. Use CRITICAL only for actual security vulnerabilities or data loss risks, not for mentions of security-critical paths or informational notes.\\n\\n'\n  + 'PR title: ' + ctx.pr_title + '\\n\\n'\n  + 'Diff (truncated to 50K chars):\\n' + ctx.diff;\n\nconst requestBody = {\n  model: 'claude-haiku-4-5-20251001',\n  max_tokens: 4096,\n  messages: [{ role: 'user', content }]\n};\nreturn [{ json: requestBody }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-08.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -339,7 +339,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const claudeText = $input.first().json.content[0].text;\nconst ctx = $('Check Security Paths').first().json;\n\n// Parse SUMMARY and details\nlet summary = 'AI code review complete for PR #' + ctx.pr_number + '.';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const match = parts[0].trim().match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst body = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full code review</summary>\\n\\n'\n  + details + '\\n\\n'\n  + '</details>';\n\n// === Dynamic security check + reviewer resolution ===\n\nfunction matchGlob(filename, pattern) {\n  if (pattern === '*') return true;\n  if (pattern.endsWith('/')) return filename.startsWith(pattern);\n  if (!pattern.includes('*')) return filename === pattern || filename.startsWith(pattern + '/');\n  const regex = new RegExp('^' + pattern.replace(/\\./g, '\\\\.').replace(/\\*+/g, '.*') + '$');\n  return regex.test(filename);\n}\n\n// 1. Extract security-critical paths from CLAUDE.md\nlet securityPaths = [];\ntry {\n  const raw = $('Fetch CLAUDE.md').first().json;\n  if (raw.content) {\n    const md = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n    const section = md.match(/## Security[- ]Critical Paths[^\\n]*\\n([\\s\\S]*?)(?=\\n## |\\n*$)/i);\n    if (section) {\n      const ticks = section[1].match(/`([^`]+)`/g);\n      if (ticks) securityPaths = ticks.map(t => t.replace(/`/g, ''));\n    }\n  }\n} catch (e) {}\n\n// 2. Extract team members and review routing from TEAM.md\nconst teamMembers = {};\nconst teamRouting = [];\ntry {\n  const raw = $('Fetch TEAM.md').first().json;\n  if (raw.content) {\n    const md = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n    const memberRows = md.split('\\n').filter(l => l.includes('|') && l.includes('@'));\n    for (const row of memberRows) {\n      const cols = row.split('|').map(s => s.trim()).filter(Boolean);\n      if (cols.length >= 3) {\n        const role = cols[1];\n        const handleMatch = cols[2].match(/@(\\w[\\w-]*)/);\n        if (handleMatch) teamMembers[role] = handleMatch[1];\n      }\n    }\n    const routingSection = md.match(/## Review Routing[^\\n]*\\n[\\s\\S]*?\\|[- |]+\\|\\n([\\s\\S]*?)(?=\\n## |\\s*$)/i);\n    if (routingSection) {\n      const rows = routingSection[1].trim().split('\\n').filter(l => l.includes('|'));\n      for (const row of rows) {\n        const cols = row.split('|').map(s => s.trim()).filter(Boolean);\n        if (cols.length >= 2) {\n          const pattern = cols[0].replace(/`/g, '').replace(/\\(.*\\)/, '').trim();\n          const role = cols[1].trim();\n          teamRouting.push({ pattern, role });\n        }\n      }\n    }\n  }\n} catch (e) {}\n\n// 3. Match changed files\nconst fileItems = $('Get Changed Files').all();\nconst filenames = fileItems.map(item => item.json.filename).filter(Boolean);\nlet requireHuman = false;\nconst reviewerRoles = new Set();\n\nfor (const filename of filenames) {\n  for (const sp of securityPaths) {\n    if (matchGlob(filename, sp)) { requireHuman = true; break; }\n  }\n  for (const route of teamRouting) {\n    if (route.pattern !== '*' && matchGlob(filename, route.pattern)) {\n      reviewerRoles.add(route.role);\n    }\n  }\n}\n\nif (requireHuman && reviewerRoles.size === 0) {\n  const defaultRoute = teamRouting.find(r => r.pattern === '*');\n  if (defaultRoute) reviewerRoles.add(defaultRoute.role);\n}\n\n// 4. Resolve roles to GitHub handles\nconst reviewers = [...reviewerRoles].map(r => teamMembers[r]).filter(Boolean);\nif (requireHuman && reviewers.length === 0) {\n  reviewers.push(...Object.values(teamMembers));\n}\n\nconst hasCritical = /^VERDICT:\\s*CRITICAL/mi.test(claudeText);\nreturn [{ json: { body, pr_number: ctx.pr_number, repo: ctx.repo, head_branch: ctx.head_branch, diff: ctx.diff, require_human: requireHuman, reviewers, has_critical: hasCritical, claude_text: claudeText } }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-10.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -616,7 +616,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [3120, 300],
+      "position": [
+        3120,
+        300
+      ],
       "id": "wf02-fix01",
       "name": "Has Critical?",
       "notes": "Routes to auto-fix path if CRITICAL findings detected in the review."
@@ -630,21 +633,32 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Accept", "value": "application/vnd.github+json" }
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ body: $('Build Review Comment').first().json.body }) }}",
-        "options": { "timeout": 30000 }
+        "options": {
+          "timeout": 30000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3120, 600],
+      "position": [
+        3120,
+        600
+      ],
       "id": "wf02-fix02",
       "name": "Post Critical Review",
       "credentials": {
-        "githubApi": { "id": "REPLACE_ME", "name": "GitHub account" }
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
       },
       "notes": "Posts the initial review comment showing critical findings before attempting auto-fix.",
       "retryOnFail": true,
@@ -653,11 +667,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const review = $('Build Review Comment').first().json;\nconst fileItems = $('Get Changed Files').all();\nconst filenames = fileItems.map(item => item.json.filename).filter(Boolean);\n\nconst content = 'You are a senior developer. A code review found CRITICAL issues in a pull request that must be fixed before merge.\\n\\n'\n  + 'REVIEW FINDINGS:\\n' + review.claude_text + '\\n\\n'\n  + 'PR DIFF (truncated):\\n' + review.diff + '\\n\\n'\n  + 'FILES CHANGED IN THIS PR:\\n' + filenames.join('\\n') + '\\n\\n'\n  + 'INSTRUCTIONS:\\n'\n  + 'Fix ALL critical issues identified in the review. Use these EXACT output formats:\\n\\n'\n  + 'To MODIFY an existing file (use exact text from the diff for OLD section):\\n'\n  + 'REVIEW_FIX_FILE: path/to/file\\n'\n  + 'REVIEW_FIX_OLD:\\n'\n  + '<exact text to find and replace>\\n'\n  + 'REVIEW_FIX_OLD_END\\n'\n  + 'REVIEW_FIX_NEW:\\n'\n  + '<replacement text>\\n'\n  + 'REVIEW_FIX_NEW_END\\n\\n'\n  + 'To CREATE a new file:\\n'\n  + 'REVIEW_NEW_FILE: path/to/file\\n'\n  + 'REVIEW_NEW_CONTENT:\\n'\n  + '<complete file content>\\n'\n  + 'REVIEW_NEW_CONTENT_END\\n\\n'\n  + 'Rules:\\n'\n  + '- For REVIEW_FIX_OLD: copy the EXACT text from the current file (visible in the diff after + prefix). Include enough surrounding context for a unique match.\\n'\n  + '- Fix ONLY the critical issues. Do not refactor or change anything else.\\n'\n  + '- You may output multiple fix blocks if multiple files need changes.\\n'\n  + '- If code needs to move to a new file, output both a modify block and a new file block.\\n'\n  + '- Maintain existing code style and indentation.';\n\nconst requestBody = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 8192,\n  messages: [{ role: 'user', content }]\n};\n\nreturn [{ json: requestBody }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-fix03.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3340, 600],
+      "position": [
+        3340,
+        600
+      ],
       "id": "wf02-fix03",
       "name": "Build Fix Prompt",
       "notes": "Builds Claude Sonnet prompt to fix all critical issues found in the review. Includes review text, diff, and changed file list."
@@ -671,22 +688,36 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "content-type", "value": "application/json" },
-            { "name": "anthropic-version", "value": "2023-06-01" }
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
-        "options": { "timeout": 120000 }
+        "options": {
+          "timeout": 120000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3560, 600],
+      "position": [
+        3560,
+        600
+      ],
       "id": "wf02-fix04",
       "name": "Claude Fix",
       "credentials": {
-        "httpHeaderAuth": { "id": "REPLACE_ME", "name": "Anthropic API Key" }
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
       },
       "notes": "Calls Claude Sonnet to generate fixes for critical review findings.",
       "retryOnFail": true,
@@ -695,11 +726,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const claudeText = $input.first().json.content[0].text;\nconst review = $('Build Review Comment').first().json;\n\nconst fixes = [];\n\n// Parse REVIEW_FIX_FILE blocks (modify existing files)\nconst fixRegex = /REVIEW_FIX_FILE:\\s*(.+)\\nREVIEW_FIX_OLD:\\n([\\s\\S]*?)\\nREVIEW_FIX_OLD_END\\nREVIEW_FIX_NEW:\\n([\\s\\S]*?)\\nREVIEW_FIX_NEW_END/g;\nlet match;\nwhile ((match = fixRegex.exec(claudeText)) !== null) {\n  fixes.push({\n    type: 'modify',\n    path: match[1].trim(),\n    fix_old: match[2],\n    fix_new: match[3],\n    repo: review.repo,\n    branch: review.head_branch,\n    pr_number: review.pr_number,\n    has_fix: true\n  });\n}\n\n// Parse REVIEW_NEW_FILE blocks (create new files)\nconst newRegex = /REVIEW_NEW_FILE:\\s*(.+)\\nREVIEW_NEW_CONTENT:\\n([\\s\\S]*?)\\nREVIEW_NEW_CONTENT_END/g;\nwhile ((match = newRegex.exec(claudeText)) !== null) {\n  fixes.push({\n    type: 'create',\n    path: match[1].trim(),\n    content_text: match[2],\n    repo: review.repo,\n    branch: review.head_branch,\n    pr_number: review.pr_number,\n    has_fix: true\n  });\n}\n\nif (fixes.length === 0) {\n  return [{ json: { has_fix: false, repo: review.repo, pr_number: review.pr_number, head_branch: review.head_branch } }];\n}\n\nreturn fixes.map(f => ({ json: f }));"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-fix05.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3780, 600],
+      "position": [
+        3780,
+        600
+      ],
       "id": "wf02-fix05",
       "name": "Parse Fix Blocks",
       "notes": "Extracts REVIEW_FIX_FILE (modify) and REVIEW_NEW_FILE (create) blocks from Claude's response. Outputs one item per file."
@@ -731,7 +765,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [4000, 600],
+      "position": [
+        4000,
+        600
+      ],
       "id": "wf02-fix06",
       "name": "Has Fix?",
       "notes": "Proceeds to commit loop if Claude provided fix blocks, otherwise routes to human review."
@@ -745,7 +782,10 @@
       },
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [4000, 850],
+      "position": [
+        4000,
+        850
+      ],
       "id": "wf02-fix07",
       "name": "Commit Loop",
       "notes": "Processes fix items one at a time. Output 0 = done, Output 1 = loop."
@@ -759,31 +799,47 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Accept", "value": "application/vnd.github+json" }
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
           ]
         },
         "options": {
           "timeout": 30000,
-          "response": { "response": { "neverError": true } }
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
         }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [4220, 850],
+      "position": [
+        4220,
+        850
+      ],
       "id": "wf02-fix08",
       "name": "Fetch Fix File",
       "credentials": {
-        "githubApi": { "id": "REPLACE_ME", "name": "GitHub account" }
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
       },
       "notes": "Fetches the target file from GitHub (SHA + content). neverError for new files that do not exist yet."
     },
     {
       "parameters": {
-        "jsCode": "const fixItem = $('Commit Loop').first().json;\nconst fileData = $input.first().json;\n\nlet encodedContent;\nif (fixItem.type === 'modify') {\n  const currentContent = Buffer.from((fileData.content || '').replace(/\\n/g, ''), 'base64').toString('utf8');\n  const fixedContent = currentContent.replace(fixItem.fix_old, fixItem.fix_new);\n  if (fixedContent === currentContent) {\n    throw new Error('REVIEW_FIX_OLD not found in file ' + fixItem.path + '. Exact string match failed.');\n  }\n  encodedContent = Buffer.from(fixedContent).toString('base64');\n} else {\n  encodedContent = Buffer.from(fixItem.content_text).toString('base64');\n}\n\nconst result = {\n  message: '[ai-review-fix] Fix: ' + fixItem.path,\n  content: encodedContent,\n  branch: fixItem.branch,\n  path: fixItem.path,\n  repo: fixItem.repo,\n  pr_number: fixItem.pr_number\n};\n\nif (fileData.sha) {\n  result.sha = fileData.sha;\n}\n\nreturn [{ json: result }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-fix09.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4440, 850],
+      "position": [
+        4440,
+        850
+      ],
       "id": "wf02-fix09",
       "name": "Prepare Commit",
       "notes": "For modify: decodes file, applies string replacement, re-encodes. For create: encodes new content. Builds GitHub Contents API PUT body."
@@ -797,21 +853,32 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Accept", "value": "application/vnd.github+json" }
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify(Object.assign({ message: $json.message, content: $json.content, branch: $json.branch }, $json.sha ? { sha: $json.sha } : {})) }}",
-        "options": { "timeout": 30000 }
+        "options": {
+          "timeout": 30000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [4660, 850],
+      "position": [
+        4660,
+        850
+      ],
       "id": "wf02-fix10",
       "name": "Commit Fix",
       "credentials": {
-        "githubApi": { "id": "REPLACE_ME", "name": "GitHub account" }
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
       },
       "notes": "Commits the fixed file to the PR branch via GitHub Contents API.",
       "retryOnFail": true,
@@ -827,21 +894,32 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Accept", "value": "application/vnd.github+json" }
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Auto-fix committed for critical review findings.** Re-reviewing the PR with fixes applied...' }) }}",
-        "options": { "timeout": 30000 }
+        "options": {
+          "timeout": 30000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [4000, 1100],
+      "position": [
+        4000,
+        1100
+      ],
       "id": "wf02-fix11",
       "name": "Post Fix Comment",
       "credentials": {
-        "githubApi": { "id": "REPLACE_ME", "name": "GitHub account" }
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
       },
       "notes": "Posts a comment confirming the auto-fix was committed before re-review.",
       "retryOnFail": true,
@@ -857,18 +935,29 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Accept", "value": "application/vnd.github.v3.diff" }
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3.diff"
+            }
           ]
         },
-        "options": { "timeout": 60000 }
+        "options": {
+          "timeout": 60000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [4220, 1100],
+      "position": [
+        4220,
+        1100
+      ],
       "id": "wf02-fix12",
       "name": "Re-Get Diff",
       "credentials": {
-        "githubApi": { "id": "REPLACE_ME", "name": "GitHub account" }
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
       },
       "notes": "Re-fetches the PR diff after auto-fix commits for the re-review.",
       "retryOnFail": true,
@@ -877,11 +966,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const diff = $('Re-Get Diff').first().json.data || '';\nconst truncatedDiff = typeof diff === 'string' ? diff.substring(0, 50000) : JSON.stringify(diff).substring(0, 50000);\n// Fallback chain: Extract PR Info -> Build Review Comment (more resilient after SplitInBatches)\nlet ctx = $('Extract PR Info').first().json;\nif (!ctx.repo || !ctx.pr_number) {\n  ctx = $('Build Review Comment').first().json;\n}\n\n// Decode context files (already fetched earlier)\nlet claudeMd = 'Not available.';\ntry {\n  const raw = $('Fetch CLAUDE.md').first().json;\n  if (raw.content) claudeMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n} catch (e) {}\n\nlet reviewMd = '';\ntry {\n  const raw = $('Fetch REVIEW.md').first().json;\n  if (raw.content) reviewMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n} catch (e) {}\n\nlet teamMd = '';\ntry {\n  const raw = $('Fetch TEAM.md').first().json;\n  if (raw.content) teamMd = Buffer.from(raw.content.replace(/\\n/g, ''), 'base64').toString('utf-8');\n} catch (e) {}\n\nconst guidelines = reviewMd || 'Review for:\\n1. Bugs and logic errors\\n2. OWASP Top 10 security issues\\n3. Missing error handling\\n4. Performance concerns';\n\nconst content = 'You are a senior code reviewer. This is a RE-REVIEW after automated fixes were applied to address critical findings.\\n\\n'\n  + 'PROJECT CONTEXT (CLAUDE.md):\\n' + claudeMd + '\\n\\n'\n  + 'REVIEW GUIDELINES (REVIEW.md):\\n' + guidelines + '\\n\\n'\n  + (teamMd ? 'TEAM CONTEXT (TEAM.md):\\n' + teamMd + '\\n\\n' : '')\n  + 'Follow the review guidelines above. Provide your response in EXACTLY this format:\\n'\n  + 'SUMMARY: [one sentence overall assessment]\\n'\n  + 'VERDICT: [CRITICAL if any Critical-severity finding, HIGH if any High-severity finding, or PASS if none]\\n'\n  + '---\\n'\n  + '[detailed review following the guidelines above]\\n\\n'\n  + 'IMPORTANT: The VERDICT line must reflect the HIGHEST severity finding. Use CRITICAL only for actual security vulnerabilities or data loss risks, not for mentions of security-critical paths or informational notes.\\n\\n'\n  + 'NOTE: This PR had critical findings that were auto-fixed. Verify the fixes are correct and check for any remaining issues.\\n\\n'\n  + 'PR title: ' + ctx.pr_title + '\\n\\n'\n  + 'Diff (truncated to 50K chars):\\n' + truncatedDiff;\n\nconst requestBody = {\n  model: 'claude-haiku-4-5-20251001',\n  max_tokens: 4096,\n  messages: [{ role: 'user', content }]\n};\nreturn [{ json: requestBody }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-fix13.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4440, 1100],
+      "position": [
+        4440,
+        1100
+      ],
       "id": "wf02-fix13",
       "name": "Re-Build Review Body",
       "notes": "Builds Claude re-review prompt using the updated diff after auto-fix commits. Reuses context files fetched earlier."
@@ -895,22 +987,36 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "content-type", "value": "application/json" },
-            { "name": "anthropic-version", "value": "2023-06-01" }
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
-        "options": { "timeout": 120000 }
+        "options": {
+          "timeout": 120000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [4660, 1100],
+      "position": [
+        4660,
+        1100
+      ],
       "id": "wf02-fix14",
       "name": "Claude Re-Review",
       "credentials": {
-        "httpHeaderAuth": { "id": "REPLACE_ME", "name": "Anthropic API Key" }
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
       },
       "notes": "Calls Claude Haiku for re-review after auto-fix commits.",
       "retryOnFail": true,
@@ -919,11 +1025,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const claudeText = $input.first().json.content[0].text;\n// Fallback chain: Extract PR Info -> Build Review Comment (more resilient after SplitInBatches)\nlet ctx = $('Extract PR Info').first().json;\nif (!ctx.repo || !ctx.pr_number) {\n  ctx = $('Build Review Comment').first().json;\n}\n\nlet summary = 'AI re-review complete for PR #' + ctx.pr_number + ' (after auto-fix).';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const match = parts[0].trim().match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst body = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**Re-review after auto-fix: ' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full re-review</summary>\\n\\n'\n  + details + '\\n\\n'\n  + '</details>';\n\nreturn [{ json: { body, repo: ctx.repo, pr_number: ctx.pr_number } }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf02-fix15.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4880, 1100],
+      "position": [
+        4880,
+        1100
+      ],
       "id": "wf02-fix15",
       "name": "Build Re-Review Comment",
       "notes": "Parses Claude re-review response. Builds formatted comment. Flows into existing Post Review Comment node."

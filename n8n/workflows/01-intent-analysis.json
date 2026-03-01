@@ -126,7 +126,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const gql = $input.first().json;\nif (gql.errors || !gql.data || !gql.data.node) return [];\nconst item = gql.data.node;\nconst status = item.fieldValueByName ? item.fieldValueByName.name : '';\nif (status !== 'AI Ready') return [];\nconst content = item.content;\nreturn [{\n  json: {\n    issue_number: content.number,\n    issue_title: content.title,\n    issue_body: content.body || '',\n    labels: content.labels.nodes.map(l => l.name),\n    repo: content.repository.nameWithOwner,\n    project_item_node_id: item.id\n  }\n}];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-gql.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -140,7 +140,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst labels = (data.labels || []).map(l => l.toLowerCase());\nconst prefixMap = {\n  bug: 'b', feature: 'f', refactoring: 'r',\n  operations: 'o', 'docs & research': 'd', enhancement: 'e'\n};\nlet prefix = 'e';\nfor (const [label, p] of Object.entries(prefixMap)) {\n  if (labels.includes(label)) { prefix = p; break; }\n}\nconst slug = (data.issue_title || 'task')\n  .toLowerCase().replace(/[^a-z0-9]+/g, '-').substring(0, 40).replace(/-$/, '');\nconst branchName = `${prefix}/#${data.issue_number}-${slug}`;\nreturn [{ json: {\n  branch_name: branchName, repo: data.repo, issue_number: data.issue_number,\n  issue_title: data.issue_title, issue_body: data.issue_body,\n  project_item_node_id: data.project_item_node_id\n} }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-04.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -169,7 +169,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Picking up this issue \u2014 creating feature branch `' + $json.branch_name + '`.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **Branch:** `' + $json.branch_name + '`\\n- **Issue:** #' + $json.issue_number + '\\n\\nA detailed implementation analysis will follow shortly.\\n\\n</details>' }) }}",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Picking up this issue — creating feature branch `' + $json.branch_name + '`.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **Branch:** `' + $json.branch_name + '`\\n- **Issue:** #' + $json.issue_number + '\\n\\nA detailed implementation analysis will follow shortly.\\n\\n</details>' }) }}",
         "options": {
           "timeout": 30000
         }
@@ -274,7 +274,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const sha = $input.first().json.object.sha;\nconst ctx = $('Prepare Context').first().json;\nreturn [{ json: { ref: 'refs/heads/' + ctx.branch_name, sha, ...ctx } }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-07.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -305,7 +305,12 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ ref: $json.ref, sha: $json.sha }) }}",
         "options": {
-          "timeout": 30000
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
         }
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -322,14 +327,12 @@
           "name": "GitHub account"
         }
       },
-      "notes": "Creates the typed feature branch ({prefix}/#N-slug) from main HEAD.",
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 3000
+      "notes": "Creates the typed feature branch ({prefix}/#N-slug) from main HEAD. neverError=true: tolerates 422 'Reference already exists' on retrigger.",
+      "retryOnFail": false
     },
     {
       "parameters": {
-        "jsCode": "const ctx = $('Prepare Branch Data').first().json;\nconst requestBody = {\n  model: 'claude-haiku-4-5-20251001',\n  max_tokens: 2048,\n  messages: [{\n    role: 'user',\n    content: 'You are a senior software architect. Analyze the following GitHub issue and provide your response in EXACTLY this format:\\n\\n'      + 'SUMMARY: [one sentence describing the implementation approach]\\n'      + '---\\n'      + '[full detailed analysis including:\\n'      + '1. Implementation approach (step-by-step)\\n'      + '2. Files likely affected -- list each file as a repo-relative path in backticks (e.g. `app/src/main.py`). If unsure of exact path, give your best guess.\\n'      + '3. Risks and considerations\\n'      + '4. Estimated complexity (Low/Medium/High)]\\n\\n'      + 'Issue title: ' + ctx.issue_title + '\\n\\n'      + 'Issue body:\\n' + ctx.issue_body\n  }]\n};\nreturn [{ json: requestBody }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-09.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -388,7 +391,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const claudeText = $input.first().json.content[0].text;\nconst ctx = $('Prepare Branch Data').first().json;\n// Parse SUMMARY line and details\nlet summary = 'Implementation analysis complete for issue #' + ctx.issue_number + '.';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const summaryLine = parts[0].trim();\n  const match = summaryLine.match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst body = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full implementation analysis</summary>\\n\\n'\n  + details + '\\n\\n'\n  + '---\\n'\n  + '*Branch: `' + ctx.branch_name + '`*\\n\\n'\n  + '</details>';\nreturn [{ json: { body, repo: ctx.repo, issue_number: ctx.issue_number, analysis_text: claudeText, branch_name: ctx.branch_name, issue_title: ctx.issue_title, issue_body: ctx.issue_body, sha: ctx.sha } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-11.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -524,7 +527,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Pass through from Format Output\nconst data = $input.first().json;\nreturn [{ json: data }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-24.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -579,7 +582,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const tree = $input.first().json.tree || [];\nconst ctx = $('Build Analysis Comment').first().json;\nconst analysisText = ctx.analysis_text || '';\n\n// Build set of valid tree paths (blobs only)\nconst blobs = tree.filter(t => t.type === 'blob');\nconst treePaths = new Set(blobs.map(t => t.path));\n\n// Strategy 1: Extract backticked paths from analysis and cross-ref with tree\nconst pathMatches = analysisText.match(/`([^`]+\\.[a-zA-Z0-9]+)`/g) || [];\nconst candidatePaths = pathMatches.map(m => m.replace(/`/g, '').trim());\nconst seen = new Set();\nconst matched = [];\nfor (const p of candidatePaths) {\n  if (treePaths.has(p) && !seen.has(p)) {\n    seen.add(p);\n    matched.push(p);\n  }\n}\n\nlet filesToFetch = matched;\n\n// Strategy 2: If no exact matches, select all source code files\nif (filesToFetch.length === 0) {\n  const sourceExts = new Set(['py','js','ts','tsx','jsx','html','css','scss','vue','svelte','go','rs','java','rb','php','c','cpp','h','hpp']);\n  const ignorePrefixes = ['.github/', 'scripts/', 'node_modules/', '.'];\n  filesToFetch = blobs\n    .map(t => t.path)\n    .filter(p => {\n      const ext = p.split('.').pop().toLowerCase();\n      if (!sourceExts.has(ext)) return false;\n      for (const prefix of ignorePrefixes) {\n        if (p.startsWith(prefix)) return false;\n      }\n      return true;\n    });\n}\n\n// Always include CLAUDE.md if it exists and not already included\nif (treePaths.has('CLAUDE.md') && !filesToFetch.includes('CLAUDE.md')) {\n  filesToFetch.unshift('CLAUDE.md');\n}\n\n// Always include test files for context (so Claude can assess test coverage)\nconst testDirs = ['tests/', 'test/', 'e2e/', '__tests__/'];\nconst testExts = new Set(['spec.js','test.js','spec.ts','test.ts','spec.jsx','test.jsx','spec.tsx','test.tsx']);\nfor (const blobPath of blobs.map(t => t.path)) {\n  if (filesToFetch.includes(blobPath)) continue;\n  const inTestDir = testDirs.some(d => blobPath.includes(d));\n  const fileName = blobPath.split('/').pop() || '';\n  const isTestFile = testExts.has(fileName.split('.').slice(1).join('.'));\n  if (inTestDir || isTestFile) {\n    filesToFetch.push(blobPath);\n  }\n}\n\n// Cap at 15 files\nconst capped = filesToFetch.slice(0, 15);\n\nif (capped.length === 0) {\n  return [{ json: { path: '', skip: true } }];\n}\n\nreturn capped.map(p => ({ json: { path: p } }));\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-auto-01.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -653,7 +656,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const ctx = $('Build Analysis Comment').first().json;\nconst claudeMdRaw = $('Fetch CLAUDE.md').first().json.content || '';\nconst tree = $('Fetch File Tree').first().json.tree || [];\n\n// Decode CLAUDE.md\nlet claudeMd = '';\ntry { claudeMd = Buffer.from(claudeMdRaw.replace(/\\n/g, ''), 'base64').toString('utf8'); } catch(e) {}\n\n// Build file tree string\nconst fileTree = tree.filter(t => t.type === 'blob').map(t => t.path).join('\\n');\n\n// Collect fetched file contents, SHA map, and content map for diff checking\nconst shaMap = {};\nconst contentMap = {};\nlet fileContents = '';\n\nconst inputItems = $input.all();\nfor (const item of inputItems) {\n  const d = item.json;\n  if (!d.path || !d.content) continue;\n  if (d.sha) shaMap[d.path] = d.sha;\n  let decoded = '';\n  try { decoded = Buffer.from(d.content.replace(/\\n/g, ''), 'base64').toString('utf8'); } catch(e) { continue; }\n  contentMap[d.path] = decoded;\n  if (decoded.length > 30000) {\n    fileContents += '### ' + d.path + '\\n(file too large, ' + decoded.length + ' chars \\u2014 skipped)\\n\\n';\n    continue;\n  }\n  fileContents += '### ' + d.path + '\\n```\\n' + decoded + '\\n```\\n\\n';\n}\n\nconst repo = ctx.repo;\nconst branch_name = ctx.branch_name;\n\nconst system_message = 'You are an expert software developer implementing changes to a GitHub repository.\\n\\n'\n  + 'REPOSITORY: ' + repo + '\\n'\n  + 'BRANCH: ' + branch_name + '\\n\\n'\n  + (claudeMd ? '## Project Context (CLAUDE.md)\\n\\n' + claudeMd + '\\n\\n' : '')\n  + '## Rules\\n\\n'\n  + '- Do NOT modify .github/workflows/ files or deploy/CI scripts\\n'\n  + '- Do NOT modify files unrelated to the issue\\n'\n  + '- Follow existing code conventions and patterns in the repository\\n'\n  + '- Implement the feature FULLY and COMPLETELY \\u2014 do not add stubs, placeholders, or partial implementations\\n'\n  + '- Only output FILE blocks for files you are ACTUALLY changing \\u2014 do not output files with no modifications\\n\\n'\n  + '## Testing\\n\\n'\n  + '- Review the existing test files provided below to understand current test coverage\\n'\n  + '- If your changes add new user-facing behavior NOT already covered by existing tests, add or update test files\\n'\n  + '- If existing tests already cover the feature you are implementing, do NOT add duplicate tests\\n'\n  + '- Follow the existing test patterns, naming conventions, and framework used in the project\\n'\n  + '- Test files are output as FILE blocks just like source files\\n\\n'\n  + '## Output Format\\n\\n'\n  + 'Output ONLY the changed files using this exact format (one block per file):\\n\\n'\n  + 'FILE: path/to/file.ext\\n'\n  + '```\\n'\n  + 'full file content here\\n'\n  + '```\\n\\n'\n  + 'After all FILE blocks, add exactly one line:\\n\\n'\n  + 'SUMMARY: One sentence describing what was implemented\\n\\n'\n  + 'IMPORTANT:\\n'\n  + '- Each FILE block must contain the COMPLETE file content (not a diff/patch)\\n'\n  + '- Only output files that have ACTUAL substantive changes\\n'\n  + '- For new files, use the full intended path';\n\nconst user_message = '## Task\\n\\n'\n  + 'Implement the following GitHub issue.\\n\\n'\n  + '**Issue #' + ctx.issue_number + ': ' + ctx.issue_title + '**\\n\\n'\n  + ctx.issue_body + '\\n\\n'\n  + '## AI Analysis (advisory only)\\n\\n'\n  + 'NOTE: The analysis below may reference file paths that do NOT exist in this repository. '\n  + 'Ignore any file paths from the analysis that are not present in the actual file tree below. '\n  + 'Use the actual repository structure and file contents to guide your implementation.\\n\\n'\n  + ctx.analysis_text + '\\n\\n'\n  + '## Repository File Tree (actual)\\n\\n'\n  + '```\\n' + fileTree + '\\n```\\n\\n'\n  + (fileContents ? '## Current File Contents\\n\\n' + fileContents + '\\n' : '')\n  + '## Instructions\\n\\n'\n  + 'Implement the feature described in the issue COMPLETELY. '\n  + 'Study the existing code carefully and make all necessary changes across all relevant files. '\n  + 'Include CSS/styling changes, HTML structure changes, and JavaScript logic changes as needed. '\n  + 'Output ONLY the FILE blocks for files with actual changes, followed by SUMMARY.';\n\nreturn [{ json: {\n  model: 'claude-sonnet-4-20250514',\n  max_tokens: 16384,\n  system: system_message,\n  messages: [{ role: 'user', content: user_message }],\n  temperature: 1,\n  _shaMap: shaMap,\n  _contentMap: contentMap\n} }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-auto-04.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -712,7 +715,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst ctx = $('Build Analysis Comment').first().json;\nconst claudeText = (response.content || []).filter(c => c.type === 'text').map(c => c.text).join('\\n');\n\n// Get SHA map and content map from Build Full Prompt\nconst shaMap = $('Build Full Prompt').first().json._shaMap || {};\nconst contentMap = $('Build Full Prompt').first().json._contentMap || {};\n\n// Parse FILE blocks\nconst fileRegex = /FILE:\\s*(.+?)\\n```[\\w]*\\n([\\s\\S]*?)\\n```/g;\nconst allFiles = [];\nlet match;\nwhile ((match = fileRegex.exec(claudeText)) !== null) {\n  const path = match[1].trim();\n  const content = match[2];\n  if (path && content !== undefined) {\n    allFiles.push({ path, content, sha: shaMap[path] || '' });\n  }\n}\n\n// Filter out files with no actual changes (compare against original content)\nconst files = allFiles.filter(f => {\n  const original = contentMap[f.path];\n  if (!original) return true; // new file, always include\n  return f.content.trim() !== original.trim();\n});\n\n// Parse SUMMARY\nlet summary = 'Auto-develop completed';\nconst summaryMatch = claudeText.match(/SUMMARY:\\s*(.+)/);\nif (summaryMatch) summary = summaryMatch[1].trim();\n\nconst skippedCount = allFiles.length - files.length;\n\nif (files.length === 0) {\n  return [{ json: {\n    path: '', content_text: '', message: '', sha: '', skip: true,\n    _meta: { summary, fileCount: 0, skippedCount, fileList: '- (no files with actual changes)', repo: ctx.repo, branch_name: ctx.branch_name, issue_number: ctx.issue_number, claude_output: claudeText }\n  } }];\n}\n\nconst fileList = files.map(f => '- `' + f.path + '`').join('\\n');\nconst meta = { summary, fileCount: files.length, skippedCount, fileList, repo: ctx.repo, branch_name: ctx.branch_name, issue_number: ctx.issue_number, claude_output: claudeText };\n\nreturn files.map(f => ({\n  json: {\n    path: f.path,\n    content_text: f.content,\n    message: '[auto-develop] Update ' + f.path,\n    sha: f.sha,\n    repo: ctx.repo,\n    branch: ctx.branch_name,\n    _meta: meta\n  }\n}));\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-auto-06.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -781,7 +784,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Get metadata from Parse & Prepare Commits\nconst items = $('Parse & Prepare Commits').all();\nconst meta = items[0].json._meta || {};\n\nconst fileList = meta.fileList || '- (no files)';\nconst fileCount = meta.fileCount || 0;\nconst summary = meta.summary || 'Auto-develop completed';\nconst repo = meta.repo;\nconst issue_number = meta.issue_number;\nconst branch_name = meta.branch_name;\n\nconst body = '> \ud83e\udd16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**Auto-develop: ' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View committed files (' + fileCount + ')</summary>\\n\\n'\n  + fileList + '\\n\\n'\n  + '---\\n'\n  + '*Branch: `' + branch_name + '`*\\n'\n  + '*CI will run automatically. If tests pass, a PR will be created by WF03.*\\n\\n'\n  + '</details>';\n\nreturn [{ json: { body, repo, issue_number } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-auto-09.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

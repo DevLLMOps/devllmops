@@ -109,7 +109,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const webhook = $('GitHub Webhook').first().json.body;\nconst runs = $input.first().json.workflow_runs || [];\nlet failedRun = runs.find(r => r.conclusion === 'failure');\nif (!failedRun) failedRun = runs.find(r => r.status === 'completed');\nif (!failedRun) failedRun = runs[0];\nif (!failedRun) throw new Error('No workflow run found for SHA ' + webhook.check_suite.head_sha);\nconst repo = webhook.repository.full_name;\nconst branch = webhook.check_suite.head_branch || failedRun.head_branch;\nlet prNumber = null;\nconst prs = webhook.check_suite.pull_requests || [];\nif (prs.length > 0) prNumber = prs[0].number;\nlet issueNumber = null;\nconst branchMatch = branch.match(/^[bfrodec]\\/#(\\d+)/) || branch.match(/issue-(\\d+)/);\nif (branchMatch) issueNumber = parseInt(branchMatch[1]);\nconst commentTarget = prNumber || issueNumber;\nconst headCommitMsg = (failedRun.head_commit && failedRun.head_commit.message) || '';\nconst skip_autofix = headCommitMsg.startsWith('[auto-fix]');\nreturn [{ json: { run_id: failedRun.id, run_name: failedRun.name, run_url: failedRun.html_url, repo, branch, comment_target: commentTarget, skip_autofix } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-04.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -165,7 +165,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://api.github.com/repos/{{ $('Extract Run Info').item.json.repo }}/actions/runs/{{ $('Extract Run Info').item.json.run_id }}/jobs",
+        "url": "=https://api.github.com/repos/{{ $('Extract Run Info').first().json.repo }}/actions/runs/{{ $('Extract Run Info').first().json.run_id }}/jobs",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "githubApi",
         "sendHeaders": true,
@@ -202,7 +202,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const jobs = $input.first().json.jobs || [];\nconst failedJob = jobs.find(j => j.conclusion === 'failure');\nif (!failedJob) throw new Error('No failed job found in run ' + $('Extract Run Info').first().json.run_id);\nconst ctx = $('Extract Run Info').first().json;\n// Build step summary for Claude\nconst stepSummary = failedJob.steps.map(s => `  ${s.conclusion === 'failure' ? '\u274c' : '\u2705'} ${s.name}: ${s.conclusion}`).join('\\n');\nreturn [{ json: { job_id: failedJob.id, job_name: failedJob.name, step_summary: stepSummary, ...ctx } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-07.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -266,7 +266,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst headers = response.headers || {};\nconst location = headers.location || headers.Location || '';\nconst ctx = $('Extract Failed Job').first().json;\nif (!location) {\n  // Fallback: provide step summary only\n  return [{ json: { logs: 'Raw logs unavailable. Step summary:\\n' + ctx.step_summary, has_logs: false, ...ctx } }];\n}\nreturn [{ json: { log_url: location, has_logs: true, ...ctx } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-09.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -307,7 +307,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const ctx = $('Extract Log URL').first().json;\nlet logs;\nif (ctx.has_logs) {\n  const rawLogs = $input.first().json.data || $input.first().json || '';\n  logs = typeof rawLogs === 'string' ? rawLogs.substring(0, 30000) : JSON.stringify(rawLogs).substring(0, 30000);\n} else {\n  logs = ctx.logs;\n}\nconst requestBody = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 4096,\n  messages: [{\n    role: 'user',\n    content: 'You are a CI/CD debugging expert. A GitHub Actions job failed.\\n\\n'      + 'Provide your response in EXACTLY this format:\\n'      + 'SUMMARY: [one sentence describing the root cause and fix]\\n'      + '---\\n'      + '[full detailed analysis including:\\n'      + '1. Root cause of the failure\\n'      + '2. The specific file(s) and line(s) to fix\\n'      + '3. The exact code change needed (as a diff)\\n'      + '4. Any additional context]\\n\\n'      + 'If the fix is a single-file text replacement, also append EXACTLY this block after your analysis:\\n'      + 'AUTO_FIX_FILE: path/to/file\\n'      + 'AUTO_FIX_OLD:\\n'      + '<exact lines to replace, copied verbatim from the file>\\n'      + 'AUTO_FIX_END\\n'      + 'AUTO_FIX_NEW:\\n'      + '<exact replacement lines>\\n'      + 'AUTO_FIX_END\\n\\n'      + 'Rules for the AUTO_FIX block:\\n'      + '- Only include it if you are confident in a single-file fix\\n'      + '- AUTO_FIX_FILE must be a repo-relative path (e.g. app/src/main.py)\\n'      + '- AUTO_FIX_OLD must match the file content exactly (whitespace matters)\\n'      + '- If the fix spans multiple files or you are unsure, omit the AUTO_FIX block entirely\\n\\n'      + 'Failed job: ' + ctx.job_name + '\\n'      + 'Branch: ' + ctx.branch + '\\n'      + 'Step summary:\\n' + ctx.step_summary + '\\n\\n'      + 'Logs (truncated to 30K chars):\\n' + logs\n  }]\n};\nreturn [{ json: requestBody }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-11.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -366,7 +366,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const claudeText = $input.first().json.content[0].text;\nconst ctx = $('Extract Log URL').first().json;\nconst runInfo = $('Extract Run Info').first().json;\nlet summary = 'CI failure diagnosed on `' + ctx.job_name + '`.';\nlet details = claudeText;\nconst parts = claudeText.split(/^---$/m);\nif (parts.length >= 2) {\n  const match = parts[0].trim().match(/^SUMMARY:\\s*(.+)/i);\n  if (match) summary = match[1].trim();\n  details = parts.slice(1).join('---').trim();\n}\nconst body = '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n'\n  + '**' + summary + '**\\n\\n'\n  + '<details>\\n<summary>View full CI failure analysis</summary>\\n\\n'\n  + details + '\\n\\n'\n  + '---\\n'\n  + '*Failed job: `' + ctx.job_name + '` | Branch: `' + ctx.branch + '` | [View run](' + ctx.run_url + ')*\\n\\n'\n  + '</details>';\nreturn [{ json: { body, claude_text: claudeText, summary, repo: ctx.repo, branch: ctx.branch, comment_target: ctx.comment_target, skip_autofix: runInfo.skip_autofix } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-13.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -421,7 +421,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prev = $('Build Analysis Comment').first().json;\nconst text = prev.claude_text || '';\nlet has_fix = false;\nlet fix_file = '';\nlet fix_old = '';\nlet fix_new = '';\nconst fileMatch = text.match(/AUTO_FIX_FILE:\\s*(.+)/);\nconst oldMatch = text.match(/AUTO_FIX_OLD:\\n([\\s\\S]*?)\\nAUTO_FIX_END/);\nconst newMatch = text.match(/AUTO_FIX_NEW:\\n([\\s\\S]*?)\\nAUTO_FIX_END/);\nif (fileMatch && oldMatch && newMatch) {\n  fix_file = fileMatch[1].trim();\n  fix_old = oldMatch[1];\n  fix_new = newMatch[1];\n  has_fix = true;\n}\nreturn [{ json: { has_fix, fix_file, fix_old, fix_new, summary: prev.summary, repo: prev.repo, branch: prev.branch, comment_target: prev.comment_target, skip_autofix: prev.skip_autofix } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-15.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -494,7 +494,12 @@
           ]
         },
         "options": {
-          "timeout": 30000
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
         }
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -511,14 +516,12 @@
           "name": "GitHub account"
         }
       },
-      "notes": "Fetches the target file from GitHub (base64 content + SHA needed for the commit).",
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 3000
+      "notes": "Fetches the target file from GitHub (base64 content + SHA). neverError=true: returns 404 for files that don't exist (Claude guessed wrong path).",
+      "retryOnFail": false
     },
     {
       "parameters": {
-        "jsCode": "const prev = $('Parse Auto-Fix').first().json;\nconst fileData = $input.first().json;\nconst content = Buffer.from(fileData.content.replace(/\\n/g, ''), 'base64').toString('utf8');\nconst fixed = content.replace(prev.fix_old, prev.fix_new);\nif (fixed === content) throw new Error('AUTO_FIX_OLD not found in file ' + prev.fix_file + '. The exact string match failed.');\nconst encodedContent = Buffer.from(fixed).toString('base64');\nconst commitMsg = '[auto-fix] ' + prev.summary;\nreturn [{ json: { message: commitMsg, content: encodedContent, sha: fileData.sha, branch: prev.branch, path: prev.fix_file, repo: prev.repo, comment_target: prev.comment_target, summary: prev.summary } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-18.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -560,6 +563,10 @@
       ],
       "id": "wf03-19",
       "name": "Commit Fix",
+      "position": [
+        4330,
+        400
+      ],
       "credentials": {
         "githubApi": {
           "id": "REPLACE_ME",
@@ -601,6 +608,10 @@
       ],
       "id": "wf03-20",
       "name": "Post Fix Comment",
+      "position": [
+        4550,
+        400
+      ],
       "credentials": {
         "githubApi": {
           "id": "REPLACE_ME",
@@ -614,7 +625,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const webhook = $('GitHub Webhook').first().json.body;\nconst conclusion = webhook.check_suite.conclusion;\nconst branch = webhook.check_suite.head_branch || '';\nconst repo = webhook.repository.full_name;\nconst owner = webhook.repository.owner.login;\nconst protectedBranches = ['main', 'master', 'release', 'develop'];\nconst should_create_pr = conclusion === 'success' && !protectedBranches.includes(branch);\nlet issueNumber = null;\nconst branchMatch = branch.match(/^[bfrodec]\\/#(\\d+)/) || branch.match(/issue-(\\d+)/);\nif (branchMatch) issueNumber = parseInt(branchMatch[1]);\nreturn [{ json: { repo, owner, branch, issue_number: issueNumber, should_create_pr } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-21.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -702,7 +713,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prev = $('Extract Branch Info').first().json;\nconst items = $input.all();\nconst has_existing_pr = items.some(item => item.json && item.json.number !== undefined);\nconst prefixMap = { b: 'Bug Fix', f: 'Feature', r: 'Refactor', o: 'Ops', d: 'Docs', e: 'Enhancement' };\nconst branch = prev.branch;\nconst branchMatch = branch.match(/^([bfrodec])\\/#(\\d+)-(.+)/);\nlet title, body;\nif (branchMatch) {\n  const prefix = prefixMap[branchMatch[1]] || 'Update';\n  const num = branchMatch[2];\n  const slug = branchMatch[3].replace(/-/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());\n  title = prefix + ': ' + slug + ' (#' + num + ')';\n  body = '> \\uD83E\\uDD16 **This is an automated PR created by the DevLLMOps AI Agent**\\n\\n'\n    + 'CI passed on branch `' + branch + '`. This PR was auto-created for review.\\n\\n'\n    + 'Closes #' + num;\n} else {\n  const slug = branch.replace(/[-_\\/]/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());\n  title = slug;\n  body = '> \\uD83E\\uDD16 **This is an automated PR created by the DevLLMOps AI Agent**\\n\\n'\n    + 'CI passed on branch `' + branch + '`. This PR was auto-created for review.';\n}\nreturn [{ json: { has_existing_pr, title, body, ...prev } }];\n"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-24.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -905,6 +916,339 @@
       "id": "wf03-29",
       "name": "Has Commits?",
       "notes": "Proceeds only if branch has commits ahead of main. Prevents empty PR creation."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4110,
+        300
+      ],
+      "id": "wf03-30",
+      "name": "Fix Applied?",
+      "notes": "Routes: true=skip (file not found or match failed) → Post Skip Comment. false=fix applied → Commit Fix."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.comment_target }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Auto-fix could not be applied:** `' + $json.message + '`\\n\\nThe AI diagnosed the CI failure and suggested a fix, but the target file was not found or the exact code pattern did not match. A human developer should review the CI failure analysis above and apply the fix manually.' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4330,
+        200
+      ],
+      "id": "wf03-31",
+      "name": "Post Skip Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts a comment when auto-fix could not be applied (file not found or match failed).",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Fix Applied?').item.json.repo }}/issues/{{ $('Fix Applied?').item.json.comment_target }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: ['ai-cant-fix'] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4550,
+        200
+      ],
+      "id": "wf03-32",
+      "name": "Add Cant Fix Label",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Adds 'ai-cant-fix' red label to the PR when auto-fix could not be applied.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.github.com/repos/{{ $('Fix Applied?').item.json.repo }}/issues/{{ $('Fix Applied?').item.json.comment_target }}/labels/ai-review-passed",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4770,
+        200
+      ],
+      "id": "wf03-33",
+      "name": "Remove Review Passed Label",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Removes 'ai-review-passed' label from the PR. neverError=true: tolerates 404 if label wasn't present.",
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract Run Info').first().json.repo }}/commits?sha={{ encodeURIComponent($('Extract Run Info').first().json.branch) }}&per_page=30",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        140
+      ],
+      "id": "wf03-34",
+      "name": "Get Branch Commits",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches the last 30 commits on the branch to count previous auto-fix attempts.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-35.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        140
+      ],
+      "id": "wf03-35",
+      "name": "Count Retries",
+      "notes": "Counts [auto-fix] commits on the branch. Sets skip_autofix=true if >= 10 retries reached."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Parse Auto-Fix').first().json.repo }}/issues/{{ $('Parse Auto-Fix').first().json.comment_target }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $('Parse Auto-Fix').first().json.skip_autofix ? '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Auto-fix retry limit reached (attempt ' + $('Parse Auto-Fix').first().json.retry_count + '/10).** The AI has attempted to fix this CI failure multiple times without success. A human developer should review the CI failure analysis and apply the fix manually.' : '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**AI analysis could not produce an automatic fix.** The CI failure was diagnosed but the AI could not determine a single-file code fix. A human developer should review the CI failure analysis above and apply the fix manually.' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3780,
+        520
+      ],
+      "id": "wf03-36",
+      "name": "Post No Fix Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts a comment when no auto-fix was produced or max retries reached.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Parse Auto-Fix').first().json.repo }}/issues/{{ $('Parse Auto-Fix').first().json.comment_target }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: ['ai-cant-fix'] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4000,
+        520
+      ],
+      "id": "wf03-37",
+      "name": "Add No Fix Label",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Adds 'ai-cant-fix' label when no auto-fix was produced or max retries reached.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.github.com/repos/{{ $('Parse Auto-Fix').first().json.repo }}/issues/{{ $('Parse Auto-Fix').first().json.comment_target }}/labels/ai-review-passed",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4220,
+        520
+      ],
+      "id": "wf03-38",
+      "name": "Remove No Fix Review Label",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Removes 'ai-review-passed' label. neverError=true: tolerates 404 if label wasn't present.",
+      "retryOnFail": false
     }
   ],
   "connections": {
@@ -974,7 +1318,7 @@
       "main": [
         [
           {
-            "node": "Get Failed Jobs",
+            "node": "Get Branch Commits",
             "type": "main",
             "index": 0
           }
@@ -1099,6 +1443,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Post No Fix Comment",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -1115,6 +1466,24 @@
     },
     "Apply Fix + Commit Body": {
       "main": [
+        [
+          {
+            "node": "Fix Applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix Applied?": {
+      "main": [
+        [
+          {
+            "node": "Post Skip Comment",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Commit Fix",
@@ -1217,6 +1586,72 @@
         [
           {
             "node": "Create PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Skip Comment": {
+      "main": [
+        [
+          {
+            "node": "Add Cant Fix Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Cant Fix Label": {
+      "main": [
+        [
+          {
+            "node": "Remove Review Passed Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Branch Commits": {
+      "main": [
+        [
+          {
+            "node": "Count Retries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Retries": {
+      "main": [
+        [
+          {
+            "node": "Get Failed Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post No Fix Comment": {
+      "main": [
+        [
+          {
+            "node": "Add No Fix Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add No Fix Label": {
+      "main": [
+        [
+          {
+            "node": "Remove No Fix Review Label",
             "type": "main",
             "index": 0
           }

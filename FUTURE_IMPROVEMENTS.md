@@ -1,5 +1,9 @@
 # Future Improvements
 
+## Add agentic capability
+
+Deploy a Scaleway spot instance automatically with Claude Code CLI that will fill the request (`--dangerously-skip-permissions`)
+
 ## Add observability to illustration
 
 Update [schema](docs/assets/illustration.drawio) to add observability as actor for creating Intents or bug reports (IAST, DAST).
@@ -8,7 +12,7 @@ Update [schema](docs/assets/illustration.drawio) to add observability as actor f
 
 Add a Claude-compatible skill or prompt to help people get started with DevLLMOps' AIgile workflow
 
-## Support conflicts
+## Support git conflicts resolution
 
 Because there will be conflicts as AIs will simultaneously work on the same code
 

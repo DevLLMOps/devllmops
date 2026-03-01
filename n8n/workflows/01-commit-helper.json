@@ -10,7 +10,10 @@
       },
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [260, 300],
+      "position": [
+        260,
+        300
+      ],
       "id": "wf01h-01",
       "name": "GitHub Helper Webhook",
       "webhookId": "devllmops-github-helper",
@@ -43,7 +46,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [480, 300],
+      "position": [
+        480,
+        300
+      ],
       "id": "wf01h-02",
       "name": "Is Read?",
       "notes": "Routes to Read path (true) or Commit path (false)."
@@ -69,7 +75,10 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [700, 200],
+      "position": [
+        700,
+        200
+      ],
       "id": "wf01h-03",
       "name": "Read from GitHub",
       "credentials": {
@@ -85,11 +94,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $('GitHub Helper Webhook').first().json.body || {};\nconst contentText = body.content_text || '';\nconst contentBase64 = Buffer.from(String(contentText)).toString('base64');\nconst result = {\n  message: body.message || '',\n  content: contentBase64,\n  branch: body.branch || ''\n};\nconst sha = body.sha || '';\nif (sha && sha.trim() !== '') {\n  result.sha = sha;\n}\nconst repo = body.repo || '';\nconst path = body.path || '';\nreturn [{ json: { ...result, path, repo } }];"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01h-04.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 400],
+      "position": [
+        700,
+        400
+      ],
       "id": "wf01h-04",
       "name": "Base64 Encode + Build Body",
       "notes": "Base64-encodes content_text for GitHub Contents API. Builds PUT body."
@@ -97,7 +109,7 @@
     {
       "parameters": {
         "method": "PUT",
-        "url": "=https://api.github.com/repos/{{ $json.repo }}/contents/{{ $json.path }}",
+        "url": "=https://api.github.com/repos/{{ $('Base64 Encode + Build Body').first().json.repo }}/contents/{{ $('Base64 Encode + Build Body').first().json.path }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "githubApi",
         "sendHeaders": true,
@@ -111,14 +123,17 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify(Object.assign({ message: $json.message, content: $json.content, branch: $json.branch }, $json.sha ? { sha: $json.sha } : {})) }}",
+        "jsonBody": "={{ JSON.stringify(Object.assign({ message: $('Base64 Encode + Build Body').first().json.message, content: $('Base64 Encode + Build Body').first().json.content, branch: $('Base64 Encode + Build Body').first().json.branch }, ($('Base64 Encode + Build Body').first().json.sha || $json.sha) ? { sha: $('Base64 Encode + Build Body').first().json.sha || $json.sha } : {})) }}",
         "options": {
           "timeout": 30000
         }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [920, 400],
+      "position": [
+        920,
+        400
+      ],
       "id": "wf01h-05",
       "name": "Commit to GitHub",
       "credentials": {
@@ -127,10 +142,54 @@
           "name": "GitHub account"
         }
       },
-      "notes": "PUT /repos/{repo}/contents/{path} to create or update a file on the branch via GitHub Contents API.",
+      "position": [
+        1030,
+        400
+      ],
+      "notes": "PUT /repos/{repo}/contents/{path}. Uses Build Body for content and Fetch Current SHA for the SHA (fallback when caller didn't supply one).",
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/contents/{{ $json.path }}?ref={{ encodeURIComponent($json.branch) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        810,
+        400
+      ],
+      "id": "wf01h-06",
+      "name": "Fetch Current SHA",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "GET file info to obtain current SHA. neverError=true: returns 404 for new files (no SHA needed). Runs before Commit to provide SHA when caller didn't supply one."
     }
   ],
   "connections": {
@@ -164,6 +223,17 @@
       ]
     },
     "Base64 Encode + Build Body": {
+      "main": [
+        [
+          {
+            "node": "Fetch Current SHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Current SHA": {
       "main": [
         [
           {
