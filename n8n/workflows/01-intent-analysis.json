@@ -582,7 +582,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-auto-01.js"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-agent-01.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -590,31 +590,171 @@
         4000,
         300
       ],
-      "id": "wf01-auto-01",
-      "name": "Select Files",
-      "notes": "Extracts paths from analysis, cross-refs with tree. Falls back to all source files if no matches. Caps at 15."
+      "id": "wf01-agent-01",
+      "name": "Init Agent State",
+      "notes": "Initializes agentic loop: system prompt, tools, conversation state in workflow static data."
     },
     {
       "parameters": {
-        "options": {
-          "reset": false
-        },
-        "batchSize": 1
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-agent-02.js"
       },
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        4220,
+        4300,
         300
       ],
-      "id": "wf01-auto-02",
-      "name": "Fetch Loop",
-      "notes": "Iterates over file paths to fetch content from GitHub one at a time."
+      "id": "wf01-agent-02",
+      "name": "Build Agent Request",
+      "notes": "Reads conversation state from static data and builds Anthropic API request with tools."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4600,
+        300
+      ],
+      "id": "wf01-agent-03",
+      "name": "Call Claude Agent",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
+      },
+      "notes": "Calls Anthropic API with tools for agentic loop. 5min timeout, 2 retries.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 10000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-agent-04.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4900,
+        300
+      ],
+      "id": "wf01-agent-04",
+      "name": "Parse Agent Response",
+      "notes": "Parses Claude response, stores in conversation state. Routes to done or tool execution."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "agent-done",
+              "leftValue": "={{ $json._done }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5200,
+        300
+      ],
+      "id": "wf01-agent-05",
+      "name": "Agent Done?",
+      "notes": "Routes: end_turn → format output, tool_use → execute tools."
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-agent-06.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5500,
+        600
+      ],
+      "id": "wf01-agent-06",
+      "name": "Prepare Tool Call",
+      "notes": "Reads next pending tool call from state, prepares HTTP request for routing."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "route-write",
+              "leftValue": "={{ $json._route }}",
+              "rightValue": "write",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5800,
+        600
+      ],
+      "id": "wf01-agent-07",
+      "name": "Tool Router",
+      "notes": "Routes tool calls: write → Helper webhook, github → GitHub API."
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://api.github.com/repos/{{ $('Build Analysis Comment').first().json.repo }}/contents/{{ $json.path }}?ref={{ encodeURIComponent($('Build Analysis Comment').first().json.branch_name) }}",
+        "url": "={{ $json.url }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "githubApi",
         "sendHeaders": true,
@@ -638,111 +778,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4440,
-        200
+        6100,
+        500
       ],
-      "id": "wf01-auto-03",
-      "name": "Fetch File",
+      "id": "wf01-agent-08",
+      "name": "GitHub API Tool",
       "credentials": {
         "githubApi": {
           "id": "REPLACE_ME",
           "name": "GitHub account"
         }
       },
-      "notes": "GET /repos/{repo}/contents/{path}?ref={branch}. neverError in case file path is wrong.",
+      "notes": "Executes GitHub API calls for read_file and list_directory tools.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-auto-04.js"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        4660,
-        300
-      ],
-      "id": "wf01-auto-04",
-      "name": "Build Full Prompt",
-      "notes": "Collects all fetched file contents, builds system+user prompt with FILE block output format for single-shot Claude call."
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "content-type",
-              "value": "application/json"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: $json.max_tokens, system: $json.system, messages: $json.messages, temperature: $json.temperature, thinking: { type: 'enabled', budget_tokens: 10000 } }) }}",
-        "options": {
-          "timeout": 300000
-        }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        4880,
-        300
-      ],
-      "id": "wf01-auto-05",
-      "name": "Claude Implementation",
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REPLACE_ME",
-          "name": "Anthropic API Key"
-        }
-      },
-      "notes": "Single-shot Anthropic call (Sonnet, 16K tokens, 5min timeout). Returns FILE blocks.",
-      "retryOnFail": true,
-      "maxTries": 2,
-      "waitBetweenTries": 10000
-    },
-    {
-      "parameters": {
-        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-auto-06.js"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        5100,
-        300
-      ],
-      "id": "wf01-auto-06",
-      "name": "Parse & Prepare Commits",
-      "notes": "Extracts FILE blocks from Claude response. Outputs one item per file for commit loop. Stores metadata (_meta) for summary."
-    },
-    {
-      "parameters": {
-        "options": {
-          "reset": false
-        },
-        "batchSize": 1
-      },
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
-      "position": [
-        5320,
-        300
-      ],
-      "id": "wf01-auto-07",
-      "name": "Commit Loop",
-      "notes": "Iterates over parsed files to commit them one at a time via GitHub Helper."
     },
     {
       "parameters": {
@@ -759,7 +809,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ operation: 'commit', path: $json.path, content_text: $json.content_text, message: $json.message, sha: $json.sha || '', repo: $json.repo, branch: $json.branch }) }}",
+        "jsonBody": "={{ JSON.stringify({ operation: 'commit', path: $json.path, content_text: $json.content_text, message: $json.message, repo: $json.repo, branch: $json.branch }) }}",
         "options": {
           "timeout": 30000,
           "response": {
@@ -772,29 +822,92 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5540,
-        200
+        6100,
+        700
       ],
-      "id": "wf01-auto-08",
-      "name": "Commit via Helper",
-      "notes": "POSTs to GitHub Helper webhook to commit each file. Uses empty sha (creates/overwrites). neverError to continue on failure.",
+      "id": "wf01-agent-09",
+      "name": "Write File Tool",
+      "notes": "Commits file via GitHub Helper webhook for write_file tool calls.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 3000
     },
     {
       "parameters": {
-        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-auto-09.js"
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-agent-10.js"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5760,
-        300
+        6400,
+        600
       ],
-      "id": "wf01-auto-09",
-      "name": "Format Output",
-      "notes": "Reads metadata from Parse & Prepare Commits to build the summary comment body."
+      "id": "wf01-agent-10",
+      "name": "Process Tool Result",
+      "notes": "Formats HTTP response into tool_result, stores in state. Checks for more pending tool calls."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "more-tools",
+              "leftValue": "={{ $json._hasMore }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        6700,
+        600
+      ],
+      "id": "wf01-agent-11",
+      "name": "More Tools?",
+      "notes": "Loops back to Prepare Tool Call if more tool calls pending, else continues to Update Conversation."
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-agent-12.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6700,
+        900
+      ],
+      "id": "wf01-agent-12",
+      "name": "Update Conversation",
+      "notes": "Appends tool results to conversation and loops back to Build Agent Request for next turn."
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-agent-14.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5500,
+        200
+      ],
+      "id": "wf01-agent-14",
+      "name": "Format Agent Output",
+      "notes": "Extracts summary and committed files list from agent state. Clears static data."
     }
   ],
   "connections": {
@@ -978,116 +1091,167 @@
       "main": [
         [
           {
-            "node": "Select Files",
+            "node": "Init Agent State",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Select Files": {
+    "Init Agent State": {
       "main": [
         [
           {
-            "node": "Fetch Loop",
+            "node": "Build Agent Request",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Fetch Loop": {
+    "Build Agent Request": {
       "main": [
         [
           {
-            "node": "Build Full Prompt",
+            "node": "Call Claude Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Agent Response": {
+      "main": [
+        [
+          {
+            "node": "Agent Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Done?": {
+      "main": [
+        [
+          {
+            "node": "Format Agent Output",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Fetch File",
+            "node": "Prepare Tool Call",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Fetch File": {
+    "Prepare Tool Call": {
       "main": [
         [
           {
-            "node": "Fetch Loop",
+            "node": "Tool Router",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Build Full Prompt": {
+    "Tool Router": {
       "main": [
         [
           {
-            "node": "Claude Implementation",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Claude Implementation": {
-      "main": [
-        [
-          {
-            "node": "Parse & Prepare Commits",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse & Prepare Commits": {
-      "main": [
-        [
-          {
-            "node": "Commit Loop",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Commit Loop": {
-      "main": [
-        [
-          {
-            "node": "Format Output",
+            "node": "Write File Tool",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Commit via Helper",
+            "node": "GitHub API Tool",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Commit via Helper": {
+    "GitHub API Tool": {
       "main": [
         [
           {
-            "node": "Commit Loop",
+            "node": "Process Tool Result",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Output": {
+    "Write File Tool": {
+      "main": [
+        [
+          {
+            "node": "Process Tool Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Tool Result": {
+      "main": [
+        [
+          {
+            "node": "More Tools?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More Tools?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Tool Call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Conversation": {
+      "main": [
+        [
+          {
+            "node": "Build Agent Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Agent Output": {
       "main": [
         [
           {
