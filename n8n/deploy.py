@@ -301,7 +301,7 @@ def build_workflow(template_path: str) -> tuple:
 
 
 def map_host(workflow: dict, creds: dict) -> dict:
-    """Replace host placeholders in node URLs with actual N8N_HOST value."""
+    """Replace host and repo placeholders in node URLs."""
     host = creds["N8N_HOST"].rstrip("/")
     # Strip https:// prefix to get bare hostname (for URL templates)
     bare_host = host.replace("https://", "").replace("http://", "")
@@ -313,6 +313,11 @@ def map_host(workflow: dict, creds: dict) -> dict:
     # Targets: "https://N8N_HOST/..." patterns
     raw = raw.replace("https://N8N_HOST/", f"https://{bare_host}/")
     raw = raw.replace("'N8N_HOST'", f"'{bare_host}'")
+
+    # Replace OWNER/REPO placeholder in GitHub API URLs
+    report_repo = creds.get("GITHUB_REPORT_REPO", "")
+    if report_repo and report_repo != "REPLACE_ME" and report_repo != "OWNER/REPO":
+        raw = raw.replace("/repos/OWNER/REPO/", f"/repos/{report_repo}/")
 
     return json.loads(raw)
 
