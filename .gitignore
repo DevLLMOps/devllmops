@@ -9,3 +9,4 @@ n8n/credentials.env
 n8n_standalone/credentials.env
 n8n_claude_k8s/credentials.env
 k8s/n8n-kubeconfig.yaml
+FUTURE_IMPROVEMENTS.md
