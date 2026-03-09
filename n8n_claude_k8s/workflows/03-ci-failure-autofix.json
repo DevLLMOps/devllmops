@@ -723,7 +723,47 @@
       ],
       "id": "wf03-24",
       "name": "Build PR Body",
-      "notes": "Checks for existing PRs. Humanizes branch slug into title (e.g. f/#5-add-dark-mode -> Feature: Add Dark Mode (#5)), builds body with AI header + Closes #N."
+      "notes": "Uses issue title from Fetch Issue node (if available) for PR title. Falls back to humanized branch slug."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract Branch Info').first().json.repo }}/issues/{{ $('Extract Branch Info').first().json.issue_number }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 420],
+      "id": "wf03-26",
+      "name": "Fetch Issue",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches the linked issue to get the full title for the PR. neverError: issue may not exist.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -1527,6 +1567,17 @@
       ]
     },
     "Check Existing PR": {
+      "main": [
+        [
+          {
+            "node": "Fetch Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Issue": {
       "main": [
         [
           {
