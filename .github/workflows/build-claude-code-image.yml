@@ -1,0 +1,38 @@
+name: Build Claude Code Image
+
+on:
+  push:
+    branches: [release]
+    paths:
+      - "k8s/Dockerfile"
+      - "k8s/entrypoint.sh"
+      - "VERSION"
+      - ".github/workflows/build-claude-code-image.yml"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: k8s
+          push: true
+          tags: |
+            ghcr.io/devllmops/devllmops-claude-code:latest
+            ghcr.io/devllmops/devllmops-claude-code:${{ steps.version.outputs.version }}
+            ghcr.io/devllmops/devllmops-claude-code:${{ github.sha }}

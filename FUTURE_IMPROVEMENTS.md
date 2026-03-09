@@ -5,6 +5,10 @@
 Deploy a Scaleway spot instance automatically with Claude Code CLI that will fill the request (`--dangerously-skip-permissions`).
 This would complement the current n8n-native agentic loop with full CLI capabilities (test running, error fixing, multi-file refactoring).
 
+## Secure prompts
+
+Wrap user issues/prompts with secure decorators.
+
 ## Add observability to illustration
 
 Update [schema](docs/assets/illustration.drawio) to add observability as actor for creating Intents or bug reports (IAST, DAST).

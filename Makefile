@@ -1,19 +1,22 @@
-.PHONY: setup deploy deploy-all list-workflows build
+# Default to K8s-based workflows. Override with: N8N_DIR=n8n_standalone make deploy-all
+N8N_DIR ?= n8n_claude_k8s
+
+.PHONY: setup deploy deploy-all list-workflows build help
 
 setup: ## First-time setup: create credentials + workflows on n8n
-	python3 n8n/deploy.py --setup
+	python3 $(N8N_DIR)/deploy.py --setup
 
 deploy-all: ## Deploy all workflows to n8n
-	python3 n8n/deploy.py
+	python3 $(N8N_DIR)/deploy.py
 
 deploy-%: ## Deploy a specific workflow (e.g. make deploy-02-pr-ai-review)
-	python3 n8n/deploy.py $*
+	python3 $(N8N_DIR)/deploy.py $*
 
 build-%: ## Build a specific workflow JSON to stdout (e.g. make build-02-pr-ai-review)
-	python3 n8n/deploy.py --build-only $*
+	python3 $(N8N_DIR)/deploy.py --build-only $*
 
 list-workflows: ## List available workflows and their IDs
-	python3 n8n/deploy.py --list
+	python3 $(N8N_DIR)/deploy.py --list
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_%-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-25s\033[0m %s\n", $$1, $$2}'

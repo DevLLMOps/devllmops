@@ -41,7 +41,7 @@
             {
               "id": "cond-field",
               "leftValue": "={{ $json.body.changes?.field_value?.field_node_id ?? '' }}",
-              "rightValue": "PVTSSF_lADOD8C1ss4BQSIqzg-ctKo",
+              "rightValue": "GITHUB_PROJECT_STATUS_FIELD_ID_PLACEHOLDER",
               "operator": {
                 "type": "string",
                 "operation": "equals",
@@ -61,7 +61,7 @@
             {
               "id": "cond-project",
               "leftValue": "={{ $json.body.projects_v2_item?.project_node_id ?? '' }}",
-              "rightValue": "PVT_kwDOD8C1ss4BQSIq",
+              "rightValue": "GITHUB_PROJECT_ID_PLACEHOLDER",
               "operator": {
                 "type": "string",
                 "operation": "equals",
@@ -210,7 +210,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ query: 'mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { singleSelectOptionId: $optionId } }) { projectV2Item { id } } }', variables: { projectId: 'PVT_kwDOD8C1ss4BQSIq', itemId: $('Prepare Context').item.json.project_item_node_id, fieldId: 'PVTSSF_lADOD8C1ss4BQSIqzg-ctKo', optionId: '57816e25' } }) }}",
+        "jsonBody": "={{ JSON.stringify({ query: 'mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { singleSelectOptionId: $optionId } }) { projectV2Item { id } } }', variables: { projectId: 'GITHUB_PROJECT_ID_PLACEHOLDER', itemId: $('Prepare Context').item.json.project_item_node_id, fieldId: 'GITHUB_PROJECT_STATUS_FIELD_ID_PLACEHOLDER', optionId: 'GITHUB_PROJECT_IN_PROGRESS_OPTION_ID_PLACEHOLDER' } }) }}",
         "options": {
           "timeout": 30000
         }

@@ -1,0 +1,61 @@
+# NetworkPolicy: restrict auto-develop job pods.
+#
+# Standard K8s NetworkPolicy cannot match FQDNs, only IPs/CIDRs.
+# Strategy: default-deny all egress, then allow DNS + HTTPS to 0.0.0.0/0.
+# This blocks non-443 exfiltration (raw TCP, SSH, SMTP, etc.) while
+# allowing the required HTTPS services (Anthropic API, GitHub, npm, PyPI).
+#
+# For stricter FQDN-based filtering, replace with a CiliumNetworkPolicy.
+---
+# Default deny all ingress and egress for job pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devllmops-jobs-default-deny
+  namespace: devllmops-jobs
+  labels:
+    app.kubernetes.io/part-of: devllmops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: auto-develop
+  policyTypes:
+    - Ingress
+    - Egress
+  # No ingress rules = deny all inbound
+  ingress: []
+  # No egress rules = deny all outbound (overridden by allow policy below)
+  egress: []
+---
+# Allow DNS to kube-system + HTTPS to any destination
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devllmops-jobs-allow-https
+  namespace: devllmops-jobs
+  labels:
+    app.kubernetes.io/part-of: devllmops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: auto-develop
+  policyTypes:
+    - Egress
+  egress:
+    # DNS resolution — explicitly target kube-system namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # HTTPS only (port 443) to any destination
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP

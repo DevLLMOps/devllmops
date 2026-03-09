@@ -322,6 +322,36 @@ def map_host(workflow: dict, creds: dict) -> dict:
     return json.loads(raw)
 
 
+def map_env_vars(workflow: dict, creds: dict) -> dict:
+    """Replace environment-specific placeholders with values from credentials.env.
+
+    Fails hard if any required variable is missing or set to REPLACE_ME.
+    """
+    placeholders = {
+        "GITHUB_PROJECT_ID_PLACEHOLDER": "GITHUB_PROJECT_ID",
+        "GITHUB_PROJECT_STATUS_FIELD_ID_PLACEHOLDER": "GITHUB_PROJECT_STATUS_FIELD_ID",
+        "GITHUB_PROJECT_IN_PROGRESS_OPTION_ID_PLACEHOLDER": "GITHUB_PROJECT_IN_PROGRESS_OPTION_ID",
+    }
+
+    raw = json.dumps(workflow)
+
+    missing = []
+    for placeholder, env_key in placeholders.items():
+        if placeholder not in raw:
+            continue
+        value = creds.get(env_key, "")
+        if not value or value == "REPLACE_ME":
+            missing.append(env_key)
+            continue
+        raw = raw.replace(placeholder, value)
+
+    if missing:
+        log(f"  Error: missing required env vars in credentials.env: {', '.join(missing)}")
+        sys.exit(1)
+
+    return json.loads(raw)
+
+
 def map_credentials(workflow: dict, creds: dict) -> tuple:
     """Replace REPLACE_ME credential IDs with actual values."""
     credential_map = {
@@ -442,6 +472,7 @@ def main():
             continue
 
         workflow = map_host(workflow, creds)
+        workflow = map_env_vars(workflow, creds)
         workflow, replaced = map_credentials(workflow, creds)
         log(f"  Mapped {replaced} credentials")
 
