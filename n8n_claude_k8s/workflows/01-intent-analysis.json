@@ -1,0 +1,607 @@
+{
+  "name": "DevLLMOps 01 - Intent Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "devllmops-github-board",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "id": "wf01-01",
+      "name": "GitHub Webhook",
+      "webhookId": "devllmops-github-board",
+      "notes": "Receives projects_v2_item events from the DevLLMOps org-level webhook."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-edited",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "edited",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "cond-field",
+              "leftValue": "={{ $json.body.changes?.field_value?.field_node_id ?? '' }}",
+              "rightValue": "GITHUB_PROJECT_STATUS_FIELD_ID_PLACEHOLDER",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "cond-issue",
+              "leftValue": "={{ $json.body.projects_v2_item?.content_type ?? '' }}",
+              "rightValue": "Issue",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "cond-project",
+              "leftValue": "={{ $json.body.projects_v2_item?.project_node_id ?? '' }}",
+              "rightValue": "GITHUB_PROJECT_ID_PLACEHOLDER",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 300],
+      "id": "wf01-02",
+      "name": "Is Status Change?",
+      "notes": "Only proceed if action=edited AND the Status field changed AND content is an Issue AND it belongs to the DevLLMOps project."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/graphql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: 'query($id: ID!) { node(id: $id) { ... on ProjectV2Item { id fieldValueByName(name: \"Status\") { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } } content { ... on Issue { number title body labels(first: 10) { nodes { name } } repository { nameWithOwner } } } } } }', variables: { id: $('GitHub Webhook').item.json.body.projects_v2_item.node_id } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 300],
+      "id": "wf01-03",
+      "name": "Fetch Item + Status",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "GraphQL query fetches the project item's current Status value plus the linked issue's number, title, body, labels, and repository.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-gql.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 300],
+      "id": "wf01-gql",
+      "name": "Validate AI Ready + Extract",
+      "notes": "Returns [] (stops execution) if status is not 'AI Ready'. Extracts issue data and project_item_node_id."
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-04.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 300],
+      "id": "wf01-04",
+      "name": "Prepare Context",
+      "notes": "Maps issue labels to branch prefixes. Branch format: {prefix}/#N-slug. Passes project_item_node_id through."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Picking up this issue — creating feature branch `' + $json.branch_name + '`.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **Branch:** `' + $json.branch_name + '`\\n- **Issue:** #' + $json.issue_number + '\\n\\nLaunching auto-develop job. Results will be posted when complete.\\n\\n</details>' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 300],
+      "id": "wf01-05",
+      "name": "Post Starting Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts initial comment acknowledging the issue and announcing the feature branch.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/graphql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: 'mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { singleSelectOptionId: $optionId } }) { projectV2Item { id } } }', variables: { projectId: 'GITHUB_PROJECT_ID_PLACEHOLDER', itemId: $('Prepare Context').item.json.project_item_node_id, fieldId: 'GITHUB_PROJECT_STATUS_FIELD_ID_PLACEHOLDER', optionId: 'GITHUB_PROJECT_IN_PROGRESS_OPTION_ID_PLACEHOLDER' } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1580, 300],
+      "id": "wf01-board",
+      "name": "Move to In Progress",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "GraphQL mutation moves the project item from AI Ready to In Progress.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Prepare Context').item.json.repo }}/git/ref/heads/main",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 300],
+      "id": "wf01-06",
+      "name": "Get Main SHA",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Gets the HEAD SHA of the main branch to create the feature branch from.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-07.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 300],
+      "id": "wf01-07",
+      "name": "Prepare Branch Data",
+      "notes": "Assembles the Git ref creation payload with branch name and SHA."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/git/refs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: $json.ref, sha: $json.sha }) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2240, 300],
+      "id": "wf01-08",
+      "name": "Create Branch",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Creates the typed feature branch from main HEAD. neverError=true: tolerates 422 'Reference already exists'.",
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-k8s-01.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2460, 300],
+      "id": "wf01-k8s-01",
+      "name": "Build K8s Job",
+      "notes": "Builds K8s Job manifest from issue context. Outputs pre-computed API URLs for downstream nodes."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.create_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.job_manifest) }}",
+        "options": {
+          "timeout": 30000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2680, 300],
+      "id": "wf01-k8s-02",
+      "name": "Create K8s Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "K8s Job Launcher"
+        }
+      },
+      "notes": "POSTs Job manifest to K8s API. Creates the auto-develop pod in devllmops-jobs namespace.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2900, 300],
+      "id": "wf01-k8s-03",
+      "name": "Wait for Job",
+      "notes": "Waits 30s before polling job status. Also used as loop interval for re-polling."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Build K8s Job').first().json.status_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3120, 300],
+      "id": "wf01-k8s-04",
+      "name": "Get Job Status",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "K8s Job Launcher"
+        }
+      },
+      "notes": "GETs K8s Job status. Checks .status.succeeded or .status.failed.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "job-succeeded",
+              "leftValue": "={{ $json.status?.succeeded ?? 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gte",
+                "name": "filter.operator.gte"
+              }
+            },
+            {
+              "id": "job-failed",
+              "leftValue": "={{ $json.status?.failed ?? 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gte",
+                "name": "filter.operator.gte"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3340, 300],
+      "id": "wf01-k8s-05",
+      "name": "Job Done?",
+      "notes": "Routes: succeeded/failed → read logs, still running → wait and re-poll."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Build K8s Job').first().json.pods_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3560, 300],
+      "id": "wf01-k8s-06",
+      "name": "Get Pod Name",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "K8s Job Launcher"
+        }
+      },
+      "notes": "Lists pods for the job using label selector. Extracts pod name for log retrieval.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Build K8s Job').first().json.log_base_url + $json.items[0].metadata.name + '/log?tailLines=500' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "allowUnauthorizedCerts": true,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3780, 300],
+      "id": "wf01-k8s-07",
+      "name": "Read Pod Logs",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "K8s Job Launcher"
+        }
+      },
+      "notes": "Reads last 500 lines of pod logs (plain text). Used to extract summary and status.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf01-k8s-08.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4000, 300],
+      "id": "wf01-k8s-08",
+      "name": "Build Result Comment",
+      "notes": "Parses pod logs for summary, cost, turns. Builds success or failure comment."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4220, 300],
+      "id": "wf01-25",
+      "name": "Post Implementation Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts the final result comment on the issue (success or failure).",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [[{ "node": "Is Status Change?", "type": "main", "index": 0 }]]
+    },
+    "Is Status Change?": {
+      "main": [[{ "node": "Fetch Item + Status", "type": "main", "index": 0 }]]
+    },
+    "Fetch Item + Status": {
+      "main": [[{ "node": "Validate AI Ready + Extract", "type": "main", "index": 0 }]]
+    },
+    "Validate AI Ready + Extract": {
+      "main": [[{ "node": "Prepare Context", "type": "main", "index": 0 }]]
+    },
+    "Prepare Context": {
+      "main": [[{ "node": "Post Starting Comment", "type": "main", "index": 0 }]]
+    },
+    "Post Starting Comment": {
+      "main": [[{ "node": "Move to In Progress", "type": "main", "index": 0 }]]
+    },
+    "Move to In Progress": {
+      "main": [[{ "node": "Get Main SHA", "type": "main", "index": 0 }]]
+    },
+    "Get Main SHA": {
+      "main": [[{ "node": "Prepare Branch Data", "type": "main", "index": 0 }]]
+    },
+    "Prepare Branch Data": {
+      "main": [[{ "node": "Create Branch", "type": "main", "index": 0 }]]
+    },
+    "Create Branch": {
+      "main": [[{ "node": "Build K8s Job", "type": "main", "index": 0 }]]
+    },
+    "Build K8s Job": {
+      "main": [[{ "node": "Create K8s Job", "type": "main", "index": 0 }]]
+    },
+    "Create K8s Job": {
+      "main": [[{ "node": "Wait for Job", "type": "main", "index": 0 }]]
+    },
+    "Wait for Job": {
+      "main": [[{ "node": "Get Job Status", "type": "main", "index": 0 }]]
+    },
+    "Get Job Status": {
+      "main": [[{ "node": "Job Done?", "type": "main", "index": 0 }]]
+    },
+    "Job Done?": {
+      "main": [
+        [{ "node": "Get Pod Name", "type": "main", "index": 0 }],
+        [{ "node": "Wait for Job", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Pod Name": {
+      "main": [[{ "node": "Read Pod Logs", "type": "main", "index": 0 }]]
+    },
+    "Read Pod Logs": {
+      "main": [[{ "node": "Build Result Comment", "type": "main", "index": 0 }]]
+    },
+    "Build Result Comment": {
+      "main": [[{ "node": "Post Implementation Comment", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}

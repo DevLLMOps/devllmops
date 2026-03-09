@@ -1,0 +1,1522 @@
+{
+  "name": "DevLLMOps 03 - CI Failure Auto-Fix",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "devllmops-github-ci",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "id": "wf03-01",
+      "name": "GitHub Webhook",
+      "webhookId": "devllmops-github-ci",
+      "notes": "Receives check_suite events from GitHub when CI runs complete."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-failure",
+              "leftValue": "={{ $json.body.check_suite.conclusion }}",
+              "rightValue": "failure",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        300
+      ],
+      "id": "wf03-02",
+      "name": "Is Failure?",
+      "notes": "Only proceed if the check suite concluded with failure."
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        590,
+        300
+      ],
+      "id": "wf03-02b",
+      "name": "Wait for GitHub Index",
+      "webhookId": "wf03-wait-gh-index",
+      "notes": "Wait 5 seconds for GitHub to index the workflow run status before querying the runs API."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('GitHub Webhook').item.json.body.repository.full_name }}/actions/runs?head_sha={{ $('GitHub Webhook').item.json.body.check_suite.head_sha }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "id": "wf03-03",
+      "name": "Find Workflow Runs",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Finds failed GitHub Actions runs by commit SHA (check_suite.id != run_id).",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-04.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "id": "wf03-04",
+      "name": "Extract Run Info",
+      "notes": "Extracts failed run ID, determines comment target (PR number or issue number from {prefix}/#N-... branch name)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.comment_target }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Investigating CI failure on branch `' + $json.branch + '`.**\\n\\n<details>\\n<summary>View details</summary>\\n\\n- **Workflow run:** ' + $json.run_name + '\\n- **Branch:** `' + $json.branch + '`\\n- **Run URL:** ' + $json.run_url + '\\n\\nRetrieving failure logs and running AI diagnosis...\\n\\n</details>' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        300
+      ],
+      "id": "wf03-05",
+      "name": "Post Starting Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts initial comment acknowledging the CI failure investigation has started.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract Run Info').first().json.repo }}/actions/runs/{{ $('Extract Run Info').first().json.run_id }}/jobs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        300
+      ],
+      "id": "wf03-06",
+      "name": "Get Failed Jobs",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Retrieves all jobs for the failed workflow run.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-07.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        300
+      ],
+      "id": "wf03-07",
+      "name": "Extract Failed Job",
+      "notes": "Finds the first failed job, builds a step-by-step summary with pass/fail indicators."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/actions/jobs/{{ $json.job_id }}/logs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false,
+              "maxRedirects": 0
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        300
+      ],
+      "id": "wf03-08",
+      "name": "Get Log Redirect URL",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Requests the log download URL without following the 302 redirect. GitHub returns a signed URL that rejects auth headers if forwarded.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-09.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        300
+      ],
+      "id": "wf03-09",
+      "name": "Extract Log URL",
+      "notes": "Extracts the Location header (signed log download URL) from the 302 response. Falls back to step summary if unavailable."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.log_url || 'https://example.com/skip' }}",
+        "authentication": "none",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        300
+      ],
+      "id": "wf03-10",
+      "name": "Download Logs",
+      "notes": "Downloads the actual logs from the signed URL WITHOUT auth headers. Timeout 60s for large logs.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-11.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        300
+      ],
+      "id": "wf03-11",
+      "name": "Build Claude Body",
+      "notes": "Builds the Anthropic API request safely in JS. Includes step summary and logs (truncated to 30K). Asks for SUMMARY + detailed format."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2680,
+        300
+      ],
+      "id": "wf03-12",
+      "name": "Claude Diagnosis",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic API Key"
+        }
+      },
+      "notes": "Calls Claude Sonnet for CI failure diagnosis. Timeout 120s, retries 3x with 5s backoff.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-13.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2900,
+        300
+      ],
+      "id": "wf03-13",
+      "name": "Build Analysis Comment",
+      "notes": "Parses Claude's SUMMARY/details format. Builds comment with AI header, bold summary, and collapsed full analysis."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.comment_target }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3120,
+        300
+      ],
+      "id": "wf03-14",
+      "name": "Post Analysis Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts the final CI failure analysis comment on the PR or linked issue.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-21.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        520
+      ],
+      "id": "wf03-21",
+      "name": "Extract Branch Info",
+      "notes": "Validates conclusion=success, checks branch is not protected (main/release), extracts repo/owner/branch/issue_number."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-should-create-pr",
+              "leftValue": "={{ $json.should_create_pr }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        520
+      ],
+      "id": "wf03-22",
+      "name": "Should Create PR?",
+      "notes": "Proceeds only if the branch is eligible for auto-PR creation."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/pulls?head={{ $json.owner }}:{{ encodeURIComponent($json.branch) }}&state=open",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        520
+      ],
+      "id": "wf03-23",
+      "name": "Check Existing PR",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Checks if an open PR already exists for this branch to avoid duplicates.",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-24.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        520
+      ],
+      "id": "wf03-24",
+      "name": "Build PR Body",
+      "notes": "Uses issue title from Fetch Issue node (if available) for PR title. Falls back to humanized branch slug."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract Branch Info').first().json.repo }}/issues/{{ $('Extract Branch Info').first().json.issue_number }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        420
+      ],
+      "id": "wf03-26",
+      "name": "Fetch Issue",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches the linked issue to get the full title for the PR. neverError: issue may not exist.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-no-existing-pr",
+              "leftValue": "={{ $json.has_existing_pr }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "name": "filter.operator.false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1580,
+        520
+      ],
+      "id": "wf03-25",
+      "name": "No PR Yet?",
+      "notes": "Proceeds only if no open PR exists for this branch (prevents duplicates)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Build PR Body').first().json.repo }}/pulls",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ title: $('Build PR Body').first().json.title, body: $('Build PR Body').first().json.body, head: $('Build PR Body').first().json.branch, base: 'main' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        520
+      ],
+      "id": "wf03-26",
+      "name": "Create PR",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Creates a pull request targeting main. This triggers WF02 (AI Review) via pull_request.opened webhook.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Extract Branch Info').item.json.repo }}/issues/{{ $('Extract Branch Info').item.json.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '> \\uD83E\\uDD16 **This is an automated message from the DevLLMOps AI Agent**\\n\\n**Pull request auto-created for branch `' + $('Extract Branch Info').item.json.branch + '`.**\\n\\n' + $json.html_url + '\\n\\nThis PR will now be reviewed by the AI Review workflow (WF02).' }) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2460,
+        520
+      ],
+      "id": "wf03-27",
+      "name": "Post PR Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts comment on linked issue confirming PR creation. Uses neverError for branches without issue numbers."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/compare/main...{{ encodeURIComponent($json.branch) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        520
+      ],
+      "id": "wf03-28",
+      "name": "Compare to Main",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Compares branch to main to verify there are actual commits. Prevents creating empty PRs.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-has-commits",
+              "leftValue": "={{ $json.ahead_by }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt",
+                "name": "filter.operator.gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2020,
+        520
+      ],
+      "id": "wf03-29",
+      "name": "Has Commits?",
+      "notes": "Proceeds only if branch has commits ahead of main. Prevents empty PR creation."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Extract Run Info').first().json.repo }}/commits?sha={{ encodeURIComponent($('Extract Run Info').first().json.branch) }}&per_page=30",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        140
+      ],
+      "id": "wf03-34",
+      "name": "Get Branch Commits",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Fetches the last 30 commits on the branch to count previous auto-fix attempts.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-35.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        140
+      ],
+      "id": "wf03-35",
+      "name": "Count Retries",
+      "notes": "Counts [auto-fix] commits on the branch. Sets skip_autofix=true if >= 10 retries reached."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-no-skip",
+              "leftValue": "={{ $('Build Analysis Comment').first().json.skip_autofix }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "name": "filter.operator.false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3400,
+        300
+      ],
+      "id": "wf03-39",
+      "name": "Should Auto-Fix?",
+      "notes": "Checks skip_autofix flag from retry counter. Skips K8s fix job if retry limit (10) reached."
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-k8s-01.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3620,
+        300
+      ],
+      "id": "wf03-k8s-01",
+      "name": "Build K8s Fix Job",
+      "notes": "Builds K8s Job manifest with prompt for Claude Code CI fix. Includes gh CLI instructions for accessing logs and PR comments."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.create_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.job_manifest) }}",
+        "options": {
+          "timeout": 30000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3840,
+        300
+      ],
+      "id": "wf03-k8s-02",
+      "name": "Create K8s Fix Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "K8s Job Launcher"
+        }
+      },
+      "notes": "POSTs Job manifest to K8s API. Creates the auto-fix pod.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4060,
+        300
+      ],
+      "id": "wf03-k8s-03",
+      "name": "Wait for Fix Job",
+      "notes": "Waits 30s before polling job status. Loop target for re-polling."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Build K8s Fix Job').first().json.status_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4280,
+        300
+      ],
+      "id": "wf03-k8s-04",
+      "name": "Get Fix Job Status",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "K8s Job Launcher"
+        }
+      },
+      "notes": "GETs K8s Job status. Checks .status.succeeded or .status.failed.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "job-succeeded",
+              "leftValue": "={{ $json.status?.succeeded ?? 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gte",
+                "name": "filter.operator.gte"
+              }
+            },
+            {
+              "id": "job-failed",
+              "leftValue": "={{ $json.status?.failed ?? 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gte",
+                "name": "filter.operator.gte"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4500,
+        300
+      ],
+      "id": "wf03-k8s-05",
+      "name": "Fix Job Done?",
+      "notes": "Routes: succeeded/failed → read logs, still running → loop back to Wait."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Build K8s Fix Job').first().json.pods_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4720,
+        300
+      ],
+      "id": "wf03-k8s-06",
+      "name": "Get Fix Pod Name",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "K8s Job Launcher"
+        }
+      },
+      "notes": "Lists pods for the fix job using label selector.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Build K8s Fix Job').first().json.log_base_url + $json.items[0].metadata.name + '/log?tailLines=500' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "allowUnauthorizedCerts": true,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4940,
+        300
+      ],
+      "id": "wf03-k8s-07",
+      "name": "Read Fix Pod Logs",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "K8s Job Launcher"
+        }
+      },
+      "notes": "Reads last 500 lines of pod logs (plain text) for summary extraction.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// INJECTED BY deploy.py — see scripts/wf03-k8s-08.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5160,
+        300
+      ],
+      "id": "wf03-k8s-08",
+      "name": "Build Fix Result Comment",
+      "notes": "Parses pod logs for summary, cost, turns. Builds success or failure comment."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/issues/{{ $json.comment_target }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5380,
+        300
+      ],
+      "id": "wf03-k8s-09",
+      "name": "Post Fix Result Comment",
+      "credentials": {
+        "githubApi": {
+          "id": "REPLACE_ME",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "Posts auto-fix result comment to the PR/issue.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Failure?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Failure?": {
+      "main": [
+        [
+          {
+            "node": "Wait for GitHub Index",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Branch Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for GitHub Index": {
+      "main": [
+        [
+          {
+            "node": "Find Workflow Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Workflow Runs": {
+      "main": [
+        [
+          {
+            "node": "Extract Run Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Run Info": {
+      "main": [
+        [
+          {
+            "node": "Post Starting Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Starting Comment": {
+      "main": [
+        [
+          {
+            "node": "Get Branch Commits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Failed Jobs": {
+      "main": [
+        [
+          {
+            "node": "Extract Failed Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Failed Job": {
+      "main": [
+        [
+          {
+            "node": "Get Log Redirect URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Log Redirect URL": {
+      "main": [
+        [
+          {
+            "node": "Extract Log URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Log URL": {
+      "main": [
+        [
+          {
+            "node": "Download Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Logs": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Body": {
+      "main": [
+        [
+          {
+            "node": "Claude Diagnosis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Diagnosis": {
+      "main": [
+        [
+          {
+            "node": "Build Analysis Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Analysis Comment": {
+      "main": [
+        [
+          {
+            "node": "Post Analysis Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Analysis Comment": {
+      "main": [
+        [
+          {
+            "node": "Should Auto-Fix?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Branch Info": {
+      "main": [
+        [
+          {
+            "node": "Should Create PR?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Create PR?": {
+      "main": [
+        [
+          {
+            "node": "Check Existing PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing PR": {
+      "main": [
+        [
+          {
+            "node": "Fetch Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Issue": {
+      "main": [
+        [
+          {
+            "node": "Build PR Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build PR Body": {
+      "main": [
+        [
+          {
+            "node": "No PR Yet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No PR Yet?": {
+      "main": [
+        [
+          {
+            "node": "Compare to Main",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create PR": {
+      "main": [
+        [
+          {
+            "node": "Post PR Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare to Main": {
+      "main": [
+        [
+          {
+            "node": "Has Commits?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Commits?": {
+      "main": [
+        [
+          {
+            "node": "Create PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Branch Commits": {
+      "main": [
+        [
+          {
+            "node": "Count Retries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Retries": {
+      "main": [
+        [
+          {
+            "node": "Get Failed Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Auto-Fix?": {
+      "main": [
+        [
+          {
+            "node": "Build K8s Fix Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build K8s Fix Job": {
+      "main": [
+        [
+          {
+            "node": "Create K8s Fix Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create K8s Fix Job": {
+      "main": [
+        [
+          {
+            "node": "Wait for Fix Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Fix Job": {
+      "main": [
+        [
+          {
+            "node": "Get Fix Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Fix Job Status": {
+      "main": [
+        [
+          {
+            "node": "Fix Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Get Fix Pod Name",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait for Fix Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Fix Pod Name": {
+      "main": [
+        [
+          {
+            "node": "Read Fix Pod Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Fix Pod Logs": {
+      "main": [
+        [
+          {
+            "node": "Build Fix Result Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fix Result Comment": {
+      "main": [
+        [
+          {
+            "node": "Post Fix Result Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null
+}
