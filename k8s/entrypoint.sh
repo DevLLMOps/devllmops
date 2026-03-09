@@ -21,6 +21,10 @@ ONBOARDING
 git config --global user.name "DevLLMOps Bot"
 git config --global user.email "devllmops-bot@noreply"
 
+# ── Configure gh CLI (for auto-fix workflows that need GitHub access) ──
+echo "${GITHUB_TOKEN}" | gh auth login --with-token 2>/dev/null || true
+gh auth setup-git 2>/dev/null || true
+
 # ── Clone and checkout ─────────────────────────────────────────────
 CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
 echo "==> Cloning ${REPO}..."

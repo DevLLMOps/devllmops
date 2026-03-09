@@ -71,6 +71,7 @@ const jobManifest = {
         containers: [{
           name: 'claude-code',
           image: IMAGE,
+          imagePullPolicy: 'Always',
           resources: {
             requests: { cpu: '500m', memory: '1Gi' },
             limits: { cpu: '2', memory: '4Gi' }

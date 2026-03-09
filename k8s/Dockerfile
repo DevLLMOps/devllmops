@@ -1,7 +1,7 @@
 FROM node:22-alpine
 
-# System deps: git for clone/commit/push, bash for entrypoint
-RUN apk add --no-cache git bash
+# System deps: git for clone/commit/push, bash for entrypoint, github-cli for gh
+RUN apk add --no-cache git bash github-cli
 
 # Install Claude Code CLI (version-pinned)
 RUN npm install -g @anthropic-ai/claude-code@~2.1.0 && npm cache clean --force
