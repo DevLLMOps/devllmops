@@ -76,7 +76,7 @@ const system = 'You are an expert software developer implementing changes to a G
   + '- Follow existing code conventions and patterns in the repository\n'
   + '- Implement the feature FULLY and COMPLETELY \u2014 no stubs or placeholders\n'
   + '- Each write_file must contain the COMPLETE file content (not a diff or patch)\n'
-  + '- Use [auto-develop] as commit message prefix\n'
+  + '- Prefix every commit message with \"#' + ctx.issue_number + ': \" (e.g. \"#' + ctx.issue_number + ': Add gradient background\")\n'
   + '- If changes add new behavior not covered by existing tests, add tests\n'
   + '- If existing tests already cover the feature, do NOT add duplicate tests\n'
   + '- Only write files that have ACTUAL changes \u2014 do not rewrite unchanged files\n';

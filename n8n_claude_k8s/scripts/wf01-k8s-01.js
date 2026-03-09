@@ -32,7 +32,8 @@ const prompt = [
   ctx.issue_body || '',
   boundary,
   '',
-  'Follow the project CLAUDE.md if present. Commit your changes with clear messages.',
+  'Follow the project CLAUDE.md if present.',
+  'Prefix every commit message with "#' + ctx.issue_number + ': " (e.g. "#' + ctx.issue_number + ': Add gradient background").',
   'After finishing, output a line: SUMMARY: <one-sentence description of what you did>'
 ].join('\n');
 
