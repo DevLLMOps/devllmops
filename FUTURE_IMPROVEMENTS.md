@@ -1,13 +1,12 @@
 # Future Improvements
 
-## Full Claude Code CLI via Scaleway spot instance
+## Secure prompts — IMPLEMENTED
 
-Deploy a Scaleway spot instance automatically with Claude Code CLI that will fill the request (`--dangerously-skip-permissions`).
-This would complement the current n8n-native agentic loop with full CLI capabilities (test running, error fixing, multi-file refactoring).
+All LLM prompts that include user-supplied content (issue title/body, PR diffs, CI logs, alert payloads) are now wrapped with random boundary delimiters. Each invocation generates a unique UUID-based boundary (e.g., `===== a3f2-b1c4-d5e6-f7a8 =====`) and the prompt instructs the model to treat everything inside the boundaries as untrusted data.
 
-## Secure prompts
+This is a defense-in-depth measure against prompt injection via issue content, malicious PRs, or crafted alert payloads. It stacks with the existing K8s sandboxing (read-only rootfs, no caps, scoped tokens, HTTPS-only egress).
 
-Wrap user issues/prompts with secure decorators.
+Scripts updated: `wf01-k8s-01.js`, `wf01-agent-01.js`, `wf01-09.js`, `wf02-08.js`, `wf02-fix03.js`, `wf03-11.js`, `wf04-02.js`, `wf04-03.js`.
 
 ## Add observability to illustration
 
